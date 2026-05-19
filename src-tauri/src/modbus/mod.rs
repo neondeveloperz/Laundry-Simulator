@@ -48,21 +48,90 @@ fn state_code(state: &crate::types::MachineState) -> u16 {
     }
 }
 
-fn get_register_value(addr: u16, m: &Machine, map: &RegisterMapping) -> u16 {
-    if      addr == map.state       { state_code(&m.state) }
-    else if addr == map.door_status { m.door_status as u16 }
-    else if addr == map.error_flag  { if m.error_code > 0 { 1 } else { 0 } }
-    else if addr == map.time_min    { (m.time_remaining / 60) as u16 }
-    else if addr == map.time_sec    { (m.time_remaining % 60) as u16 }
-    else if addr == map.water_level { m.water_level as u16 }
-    else if addr == map.temperature { (m.temperature * 10.0) as u16 }
-    else if addr == map.rpm         { m.rpm as u16 }
-    else if addr == map.program     { m.program as u16 }
-    else if addr == map.coins       { m.coins as u16 }
-    else if addr == map.total_coins { m.total_coins as u16 }
-    else if addr == map.machine_id  { m.id as u16 }
-    else if addr == map.error_code  { m.error_code as u16 }
-    else                            { 0 }
+fn get_register_value(addr: u16, m: &Machine, map: &RegisterMapping, cfg: &SimulatorConfig) -> u16 {
+    if m.machine_type == crate::types::MachineType::Dryer {
+        // Dryer custom mapping
+        if      addr == 20 { state_code(&m.state) }
+        else if addr == 21 { if m.door_status == 1 { 0 } else { 1 } }
+        else if addr == 22 { if m.error_code > 0 { 1 } else { 0 } }
+        else if addr == 23 { (m.time_remaining / 3600) as u16 }
+        else if addr == 24 { ((m.time_remaining % 3600) / 60) as u16 }
+        else if addr == 25 { (m.time_remaining % 60) as u16 }
+        else if addr == 26 {
+            // Inlet temperature (e.g. set temp of current step, or slightly higher)
+            let (_, step, _) = crate::programs::get_active_step_details(m.machine_type, m.program, m.time_remaining, cfg);
+            if m.time_remaining > 0 { step.target_temp as u16 } else { 0 }
+        }
+        else if addr == 27 { m.temperature as u16 } // Outlet temperature (exhaust)
+        else if addr == 28 { m.program as u16 }
+        else if addr == 29 {
+            let (step_idx, _, _) = crate::programs::get_active_step_details(m.machine_type, m.program, m.time_remaining, cfg);
+            if m.time_remaining > 0 { (step_idx + 1) as u16 } else { 0 }
+        }
+        else if addr == 30 { crate::programs::get_program_price(m.machine_type, m.program, cfg) as u16 }
+        else if addr == 31 { m.coins as u16 }
+        else if addr == 32 { m.total_coins as u16 }
+        else if addr == 33 { m.total_coins as u16 }
+        else if addr == map.machine_id { m.id as u16 }
+        else if addr == map.error_code { m.error_code as u16 }
+        else { 0 }
+    } else {
+        // Washer standard mapping
+        if      addr == map.state       { state_code(&m.state) }
+        else if addr == map.door_status { m.door_status as u16 }
+        else if addr == map.error_flag  { if m.error_code > 0 { 1 } else { 0 } }
+        else if addr == map.time_min    {
+            let (_, _, step_remain) = crate::programs::get_active_step_details(m.machine_type, m.program, m.time_remaining, cfg);
+            (step_remain / 60) as u16
+        }
+        else if addr == map.time_sec    {
+            let (_, _, step_remain) = crate::programs::get_active_step_details(m.machine_type, m.program, m.time_remaining, cfg);
+            (step_remain % 60) as u16
+        }
+        // Auto program total remain time
+        else if addr == map.time_min + 2 { // 25: Auto program remain time (h)
+            (m.time_remaining / 3600) as u16
+        }
+        else if addr == map.time_min + 3 { // 26: Auto program remain time (min)
+            ((m.time_remaining % 3600) / 60) as u16
+        }
+        else if addr == map.time_min + 4 { // 27: Auto program remain time (sec)
+            (m.time_remaining % 60) as u16
+        }
+        else if addr == map.water_level { m.water_level as u16 }
+        else if addr == map.water_level + 1 { // 29: target water level of active step
+            let (_, step, _) = crate::programs::get_active_step_details(m.machine_type, m.program, m.time_remaining, cfg);
+            step.target_water as u16
+        }
+        else if addr == map.temperature {
+            m.temperature as u16
+        }
+        else if addr == map.temperature + 1 { // 31: target temp of active step
+            let (_, step, _) = crate::programs::get_active_step_details(m.machine_type, m.program, m.time_remaining, cfg);
+            step.target_temp as u16
+        }
+        else if addr == map.rpm         { m.rpm as u16 }
+        else if addr == map.rpm + 1     { // 33: target rpm of active step
+            let (_, step, _) = crate::programs::get_active_step_details(m.machine_type, m.program, m.time_remaining, cfg);
+            step.target_rpm as u16
+        }
+        else if addr == map.program     { m.program as u16 }
+        else if addr == map.program + 1 { // 35: Currently running step number (1-indexed)
+            let (step_idx, _, _) = crate::programs::get_active_step_details(m.machine_type, m.program, m.time_remaining, cfg);
+            if m.time_remaining > 0 { (step_idx + 1) as u16 } else { 0 }
+        }
+        else if addr == map.program + 2 { // 36: Coins required of currently selected program
+            crate::programs::get_program_price(m.machine_type, m.program, cfg) as u16
+        }
+        else if addr == map.coins       { m.coins as u16 }
+        else if addr == map.total_coins { m.total_coins as u16 }
+        else if addr == map.total_coins + 1 { // 39: Current coins in cash box
+            m.total_coins as u16
+        }
+        else if addr == map.machine_id  { m.id as u16 }
+        else if addr == map.error_code  { m.error_code as u16 }
+        else                            { 0 }
+    }
 }
 
 fn apply_write_to_machine(
@@ -127,11 +196,18 @@ fn apply_write_to_machine(
 // FRAME ENCODE / DECODE
 // ============================================================
 
-fn fc03_response_dynamic(unit_id: u8, start: u16, count: u16, m: &Machine, map: &RegisterMapping) -> Vec<u8> {
+fn fc03_response_dynamic(
+    unit_id: u8,
+    start: u16,
+    count: u16,
+    m: &Machine,
+    map: &RegisterMapping,
+    cfg: &SimulatorConfig,
+) -> Vec<u8> {
     let base_addr = if start >= 40000 { start.saturating_sub(40000) } else { start };
     let mut resp = vec![unit_id, 0x03, (count * 2) as u8];
     for i in 0..count {
-        let v = get_register_value(base_addr + i, m, map);
+        let v = get_register_value(base_addr + i, m, map, cfg);
         resp.push((v >> 8) as u8);
         resp.push((v & 0xFF) as u8);
     }
@@ -286,7 +362,7 @@ pub fn modbus_server_thread(
                                 };
                                 match decoded.function_code {
                                     0x03 | 0x04 => {
-                                        Some(fc03_response_dynamic(decoded.unit_id, decoded.address, decoded.quantity, m, map))
+                                        Some(fc03_response_dynamic(decoded.unit_id, decoded.address, decoded.quantity, m, map, &cfg_lock))
                                     }
                                     0x06 => {
                                         apply_write_to_machine(decoded.address, decoded.quantity, m, &cfg_lock, map, &handle);

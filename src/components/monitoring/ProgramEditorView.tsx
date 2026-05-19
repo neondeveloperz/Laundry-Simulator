@@ -1,6 +1,6 @@
 // Path: src/components/monitoring/ProgramEditorView.tsx
 import { useState, useEffect, useCallback } from "react"
-import { SlidersHorizontal, Save, RotateCcw, Waves, Wind, Clock, Plus, Trash2, ArrowUp, ArrowDown, Sparkles } from "lucide-react"
+import { SlidersHorizontal, Save, RotateCcw, Waves, Wind, Clock, Plus, Trash2, ArrowUp, ArrowDown } from "lucide-react"
 import { getConfig, updateSimulatorPrograms } from "@/lib/commands"
 import type { ProgramInfo, SimulatorConfig, Toast, ProgramStep } from "@/types"
 import { Button } from "@/components/ui/button"
