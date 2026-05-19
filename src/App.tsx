@@ -11,9 +11,11 @@ import {
   Server, Zap,
   type LucideIcon,
 } from "lucide-react"
-import { getAllMachines, getConfig, getModbusStatus, setSimulationMode } from "@/lib/commands"
+import { getAllMachines, getConfig, getModbusStatus, setSimulationMode, getAppInfo } from "@/lib/commands"
 import type { Machine, SimulatorConfig, LogEntry, ModbusStatus } from "@/types"
 import { useToast } from "@/hooks/useToast"
+import { check as checkUpdate } from "@tauri-apps/plugin-updater"
+import { relaunch } from "@tauri-apps/plugin-process"
 
 import { AppSidebar, type AppView } from "@/components/app-sidebar"
 import { SiteHeader } from "@/components/site-header"
@@ -34,11 +36,11 @@ import { cn } from "@/lib/utils"
 
 // ── Placeholder panels ──────────────────────────────────────────
 const PLACEHOLDER_META: Record<string, { icon: LucideIcon; label: string }> = {
-  logs:      { icon: ScrollText,        label: "Event Stream" },
-  registers: { icon: Table,             label: "Register Monitor" },
-  hex:       { icon: Binary,            label: "Hex Traffic Monitor" },
-  programs:  { icon: SlidersHorizontal, label: "Program Editor" },
-  settings:  { icon: Settings2,         label: "App Settings" },
+  logs: { icon: ScrollText, label: "Event Stream" },
+  registers: { icon: Table, label: "Register Monitor" },
+  hex: { icon: Binary, label: "Hex Traffic Monitor" },
+  programs: { icon: SlidersHorizontal, label: "Program Editor" },
+  settings: { icon: Settings2, label: "App Settings" },
 }
 
 function PlaceholderPanel({ view }: { view: AppView }) {
@@ -54,13 +56,13 @@ function PlaceholderPanel({ view }: { view: AppView }) {
 }
 
 export default function App() {
-  const [view, setView]           = useState<AppView>("fleet")
-  const [machines, setMachines]   = useState<Machine[]>([])
-  const [config, setConfig]       = useState<SimulatorConfig | null>(null)
+  const [view, setView] = useState<AppView>("fleet")
+  const [machines, setMachines] = useState<Machine[]>([])
+  const [config, setConfig] = useState<SimulatorConfig | null>(null)
   const [modbusStatus, setModbus] = useState<ModbusStatus | null>(null)
-  const [logs, setLogs]           = useState<LogEntry[]>([])
+  const [logs, setLogs] = useState<LogEntry[]>([])
   const [simEnabled, setSimEnabled] = useState(true)
-  const [simSpeed, setSimSpeed]     = useState(1)
+  const [simSpeed, setSimSpeed] = useState(1)
   const { toasts, show: addToast } = useToast()
 
   // ── Data fetching ──────────────────────────────────────────
@@ -111,14 +113,47 @@ export default function App() {
     }
   }, [fetchMachines, fetchConfig, pollModbus])
 
+  // ── Auto Update System ─────────────────────────────────────
+  useEffect(() => {
+    async function performAutoUpdate() {
+      try {
+        const update = await checkUpdate()
+        if (update) {
+          addToast("info", `New update available: v${update.version}. Downloading...`)
+          
+          await update.downloadAndInstall((event) => {
+            switch (event.event) {
+              case "Started":
+                console.log("Auto-update download started.")
+                break
+              case "Progress":
+                console.log(`Auto-update downloaded ${event.data.chunkLength} bytes.`)
+                break
+              case "Finished":
+                addToast("success", "Update installed successfully! Restarting app...")
+                break
+            }
+          })
+
+          await relaunch()
+        }
+      } catch (err) {
+        console.error("Auto update failed:", err)
+      }
+    }
+
+    const timer = setTimeout(performAutoUpdate, 5000)
+    return () => clearTimeout(timer)
+  }, [addToast])
+
   // ── Derived stats ──────────────────────────────────────────
   const activeCount = machines.filter(m => !["Idle", "Completed", "Error"].includes(m.state)).length
-  const errorCount  = machines.filter(m => m.state === "Error").length
-  const connected   = modbusStatus?.connected ?? false
-  const nextId      = machines.length > 0 ? Math.max(...machines.map(m => m.id)) + 1 : 1
+  const errorCount = machines.filter(m => m.state === "Error").length
+  const connected = modbusStatus?.connected ?? false
+  const nextId = machines.length > 0 ? Math.max(...machines.map(m => m.id)) + 1 : 1
 
   const totalWashers = machines.filter(m => m.machine_type === "Washer").length
-  const totalDryers  = machines.filter(m => m.machine_type === "Dryer").length
+  const totalDryers = machines.filter(m => m.machine_type === "Dryer").length
 
   // ── Render active view ─────────────────────────────────────
   function renderView() {
@@ -297,9 +332,9 @@ export default function App() {
             {logs.length > 0 && (
               <div className="border-t bg-muted/10 px-4 py-1 flex items-center gap-2 text-[10px] font-mono flex-shrink-0">
                 <span className={cn("font-bold", {
-                  "text-destructive":     logs.at(-1)?.level === "ERROR",
-                  "text-primary":         logs.at(-1)?.level === "MODBUS",
-                  "text-amber-400":       logs.at(-1)?.level === "SCENARIO",
+                  "text-destructive": logs.at(-1)?.level === "ERROR",
+                  "text-primary": logs.at(-1)?.level === "MODBUS",
+                  "text-amber-400": logs.at(-1)?.level === "SCENARIO",
                   "text-muted-foreground": logs.at(-1)?.level === "INFO",
                 })}>
                   [{logs.at(-1)?.level}]
@@ -317,8 +352,8 @@ export default function App() {
         {toasts.map(t => {
           const ToastIcon: LucideIcon =
             t.type === "success" ? CheckCircle2 :
-            t.type === "error"   ? XCircle :
-            t.type === "warning" ? AlertTriangle : Info
+              t.type === "error" ? XCircle :
+                t.type === "warning" ? AlertTriangle : Info
           return (
             <div
               key={t.id}
@@ -326,9 +361,9 @@ export default function App() {
                 "flex items-center gap-2 rounded-lg border px-3 py-2 text-sm shadow-xl backdrop-blur-sm",
                 "animate-in slide-in-from-right-5 duration-200",
                 t.type === "success" && "border-emerald-500/30 bg-emerald-950/90 text-emerald-300",
-                t.type === "error"   && "border-destructive/30 bg-red-950/90 text-red-300",
+                t.type === "error" && "border-destructive/30 bg-red-950/90 text-red-300",
                 t.type === "warning" && "border-yellow-500/30 bg-yellow-950/90 text-yellow-300",
-                t.type === "info"    && "border-blue-500/30 bg-blue-950/90 text-blue-300",
+                t.type === "info" && "border-blue-500/30 bg-blue-950/90 text-blue-300",
               )}
             >
               <ToastIcon size={15} />

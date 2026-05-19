@@ -37,5 +37,14 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDIxQ0YxOEJEODMyMTUxNTYKUldSV1VTR0R2UmpQSWZPdlN1OTVMaUJwbUo5MjU1K3V2Rm8wbW5LbG5Md3lBYkZzSVpMQ1BDL2cK",
+      "endpoints": [
+        "https://github.com/neondeveloperz/Laundry-Simulator/releases/latest/download/latest.json"
+      ]
+    }
   }
 }
