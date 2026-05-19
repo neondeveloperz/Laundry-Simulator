@@ -11,7 +11,7 @@ import {
   Server, Zap,
   type LucideIcon,
 } from "lucide-react"
-import { getAllMachines, getConfig, getModbusStatus, setSimulationMode, getAppInfo } from "@/lib/commands"
+import { getAllMachines, getConfig, getModbusStatus, setSimulationMode } from "@/lib/commands"
 import type { Machine, SimulatorConfig, LogEntry, ModbusStatus } from "@/types"
 import { useToast } from "@/hooks/useToast"
 import { check as checkUpdate } from "@tauri-apps/plugin-updater"
