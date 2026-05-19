@@ -27,6 +27,7 @@ import {
   SidebarSeparator,
 } from "@/components/ui/sidebar"
 import { cn } from "@/lib/utils"
+import { getAppInfo } from "@/lib/commands"
 
 export type AppView =
   | "fleet"
@@ -141,6 +142,14 @@ export function AppSidebar({
   modbusConnected = false,
   ...props
 }: AppSidebarProps) {
+  const [version, setVersion] = React.useState<string>("2.0.2")
+
+  React.useEffect(() => {
+    getAppInfo()
+      .then(info => setVersion(info.version))
+      .catch(() => {})
+  }, [])
+
   const navMain = NAV_MAIN.map(item => {
     if (item.id === "fleet" && fleetCount > 0)
       return { ...item, badge: fleetCount }
@@ -166,7 +175,7 @@ export function AppSidebar({
                 </div>
                 <div className="flex flex-col">
                   <span className="text-sm font-bold leading-tight">Laundry</span>
-                  <span className="text-[10px] text-muted-foreground leading-tight">Simulator v2.0.0</span>
+                  <span className="text-[10px] text-muted-foreground leading-tight">Simulator v{version}</span>
                 </div>
               </div>
             </SidebarMenuButton>

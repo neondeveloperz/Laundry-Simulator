@@ -4045,7 +4045,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-native"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "chrono",
  "log",
