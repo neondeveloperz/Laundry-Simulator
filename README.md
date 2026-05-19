@@ -96,6 +96,32 @@ The output installer/binary will be in `src-tauri/target/release/bundle/`.
 
 ---
 
+### 🍎 macOS Gatekeeper / "App is damaged" Bypass
+
+Since the macOS release is ad-hoc signed and not notarized with an Apple Developer Account ($99/year), you may encounter a Gatekeeper warning saying **"Laundry Simulator is damaged and can't be opened. You should move it to the Trash."** or similar block when downloading the app from GitHub.
+
+You can easily bypass this using one of these options:
+
+#### Option 1: Terminal (Fastest)
+Open your Terminal and run the `xattr` command to remove the quarantine attribute:
+```bash
+# General command
+xattr -cr /path/to/Laundry\ Simulator.app
+
+# If the app is moved to your Applications folder
+xattr -cr /Applications/Laundry\ Simulator.app
+```
+> [!TIP]
+> You can type `xattr -cr ` in Terminal and drag the `Laundry Simulator.app` file from Finder directly into the Terminal window to auto-populate the correct path!
+
+#### Option 2: Finder (GUI)
+1. Open **Finder** and go to the folder containing the app.
+2. **Right-click** (or `Ctrl` + click) on `Laundry Simulator.app` and choose **Open**.
+3. A different confirmation dialog will appear with an **Open** or **Open Anyway** button.
+4. Click **Open** to run. macOS will remember your decision, and you can open it normally via double-click in the future!
+
+---
+
 ## 📁 Project Structure
 
 ```
