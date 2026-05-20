@@ -3,10 +3,23 @@
 
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicU32};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::types::{LogEntry, Machine, SimulatorConfig, FaultConfig};
+
+/// Max log file size in bytes (10 MB)
+const MAX_LOG_SIZE: u64 = 10 * 1024 * 1024;
+
+/// Helper to lock a mutex with poisoning recovery.
+/// If a thread panicked while holding the lock, we recover the inner data
+/// instead of propagating the panic to all other threads.
+pub fn safe_lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|poisoned| {
+        log::warn!("Mutex was poisoned, recovering...");
+        poisoned.into_inner()
+    })
+}
 
 pub struct AppState {
     pub machines:          Arc<Mutex<Vec<Machine>>>,
@@ -51,8 +64,8 @@ impl AppState {
     // ── Persistence ──────────────────────────────────────────
 
     pub fn save_machines(&self) {
-        if let Some(handle) = self.app_handle.lock().unwrap().as_ref() {
-            let machines = self.machines.lock().unwrap().clone();
+        if let Some(handle) = safe_lock(&self.app_handle).as_ref() {
+            let machines = safe_lock(&self.machines).clone();
             if let Ok(app_dir) = handle.path().app_config_dir() {
                 let _ = std::fs::create_dir_all(&app_dir);
                 let path = app_dir.join("machines.json");
@@ -64,12 +77,12 @@ impl AppState {
     }
 
     pub fn load_machines(&self) {
-        if let Some(handle) = self.app_handle.lock().unwrap().as_ref() {
+        if let Some(handle) = safe_lock(&self.app_handle).as_ref() {
             if let Ok(app_dir) = handle.path().app_config_dir() {
                 let path = app_dir.join("machines.json");
                 if let Ok(data) = std::fs::read_to_string(path) {
                     if let Ok(saved) = serde_json::from_str::<Vec<Machine>>(&data) {
-                        let mut m = self.machines.lock().unwrap();
+                        let mut m = safe_lock(&self.machines);
                         *m = saved;
                     }
                 }
@@ -78,8 +91,8 @@ impl AppState {
     }
 
     pub fn save_config(&self) {
-        if let Some(handle) = self.app_handle.lock().unwrap().as_ref() {
-            let cfg = self.config.lock().unwrap().clone();
+        if let Some(handle) = safe_lock(&self.app_handle).as_ref() {
+            let cfg = safe_lock(&self.config).clone();
             if let Ok(app_dir) = handle.path().app_config_dir() {
                 let _ = std::fs::create_dir_all(&app_dir);
                 let path = app_dir.join("settings.json");
@@ -91,12 +104,12 @@ impl AppState {
     }
 
     pub fn load_config(&self) {
-        if let Some(handle) = self.app_handle.lock().unwrap().as_ref() {
+        if let Some(handle) = safe_lock(&self.app_handle).as_ref() {
             if let Ok(app_dir) = handle.path().app_config_dir() {
                 let path = app_dir.join("settings.json");
                 if let Ok(data) = std::fs::read_to_string(path) {
                     if let Ok(cfg) = serde_json::from_str::<SimulatorConfig>(&data) {
-                        let mut c = self.config.lock().unwrap();
+                        let mut c = safe_lock(&self.config);
                         *c = cfg;
                     }
                 }
@@ -107,9 +120,10 @@ impl AppState {
     // ── Event emission ───────────────────────────────────────
 
     /// Emit a structured log event to the frontend and append to simulation.log on disk.
+    /// Automatically truncates the log file when it exceeds MAX_LOG_SIZE (10 MB).
     pub fn emit_log(&self, level: &str, msg: &str) {
         let timestamp = chrono::Local::now().format("%H:%M:%S%.3f").to_string();
-        if let Some(handle) = self.app_handle.lock().unwrap().as_ref() {
+        if let Some(handle) = safe_lock(&self.app_handle).as_ref() {
             let entry = LogEntry {
                 timestamp: timestamp.clone(),
                 level: level.to_string(),
@@ -120,6 +134,22 @@ impl AppState {
             if let Ok(app_dir) = handle.path().app_config_dir() {
                 let _ = std::fs::create_dir_all(&app_dir);
                 let path = app_dir.join("simulation.log");
+
+                // Rotate log if it exceeds max size
+                if let Ok(meta) = std::fs::metadata(&path) {
+                    if meta.len() > MAX_LOG_SIZE {
+                        if let Ok(content) = std::fs::read_to_string(&path) {
+                            // Keep last ~20% of log content
+                            let keep_from = content.len().saturating_sub(content.len() / 5);
+                            // Find next newline after the cut point to avoid partial lines
+                            let start = content[keep_from..].find('\n')
+                                .map(|i| keep_from + i + 1)
+                                .unwrap_or(keep_from);
+                            let _ = std::fs::write(&path, &content[start..]);
+                        }
+                    }
+                }
+
                 if let Ok(mut file) = std::fs::OpenOptions::new()
                     .create(true)
                     .append(true)

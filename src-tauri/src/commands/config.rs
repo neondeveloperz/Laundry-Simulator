@@ -3,17 +3,17 @@
 
 use tauri::{AppHandle, Manager, State};
 
-use crate::state::AppState;
+use crate::state::{AppState, safe_lock};
 use crate::types::{AppInfo, SimulatorConfig};
 
 #[tauri::command]
 pub fn get_config(state: State<AppState>) -> SimulatorConfig {
-    state.config.lock().unwrap().clone()
+    safe_lock(&state.config).clone()
 }
 
 #[tauri::command]
 pub fn update_config(config: SimulatorConfig, state: State<AppState>) -> Result<(), String> {
-    *state.config.lock().unwrap() = config;
+    *safe_lock(&state.config) = config;
     state.save_config();
     state.emit_log("INFO", "Admin: Configuration updated");
     Ok(())
@@ -37,7 +37,7 @@ pub fn update_simulator_programs(
     dryer_programs:  Vec<crate::types::ProgramInfo>,
     state:           State<AppState>,
 ) -> Result<(), String> {
-    let mut cfg = state.config.lock().unwrap();
+    let mut cfg = safe_lock(&state.config);
     cfg.washer_programs = washer_programs;
     cfg.dryer_programs  = dryer_programs;
     drop(cfg);
@@ -49,8 +49,8 @@ pub fn update_simulator_programs(
 #[tauri::command]
 pub fn reset_all_data(state: State<AppState>, app: AppHandle) -> Result<(), String> {
     {
-        state.machines.lock().unwrap().clear();
-        *state.config.lock().unwrap() = SimulatorConfig::default();
+        safe_lock(&state.machines).clear();
+        *safe_lock(&state.config) = SimulatorConfig::default();
     }
     if let Ok(app_dir) = app.path().app_config_dir() {
         let _ = std::fs::remove_file(app_dir.join("machines.json"));

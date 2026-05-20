@@ -4,7 +4,7 @@
 use std::sync::atomic::Ordering;
 use tauri::State;
 
-use crate::state::AppState;
+use crate::state::{AppState, safe_lock};
 
 #[tauri::command]
 pub fn set_simulation_mode(enabled: bool, speed: u32, state: State<AppState>) -> Result<(), String> {
@@ -12,7 +12,7 @@ pub fn set_simulation_mode(enabled: bool, speed: u32, state: State<AppState>) ->
     state.simulation_enabled.store(enabled, Ordering::SeqCst);
     state.simulation_speed.store(clamped, Ordering::SeqCst);
     {
-        let mut cfg = state.config.lock().unwrap();
+        let mut cfg = safe_lock(&state.config);
         cfg.simulation_enabled = enabled;
         cfg.simulation_speed   = clamped;
     }

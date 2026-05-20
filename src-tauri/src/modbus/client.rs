@@ -8,11 +8,11 @@ use std::time::Duration;
 use tauri::State;
 
 use crate::modbus::crc16;
-use crate::state::AppState;
+use crate::state::{AppState, safe_lock};
 
 #[tauri::command]
 pub fn start_modbus_client(port_name: String, baud: u32, state: State<AppState>) -> Result<(), String> {
-    let mut client = state.client_port.lock().unwrap();
+    let mut client = safe_lock(&state.client_port);
     if client.is_some() {
         return Err("Client already connected".into());
     }
@@ -30,7 +30,7 @@ pub fn start_modbus_client(port_name: String, baud: u32, state: State<AppState>)
 
 #[tauri::command]
 pub fn stop_modbus_client(state: State<AppState>) -> Result<(), String> {
-    *state.client_port.lock().unwrap() = None;
+    *safe_lock(&state.client_port) = None;
     state.client_connected.store(false, Ordering::SeqCst);
     state.emit_log("MODBUS", "Modbus Client: Disconnected");
     Ok(())
@@ -51,7 +51,7 @@ pub fn modbus_client_request(
     value_or_qty: u16,
     state: State<AppState>,
 ) -> Result<Vec<u16>, String> {
-    let mut client_lock = state.client_port.lock().unwrap();
+    let mut client_lock = safe_lock(&state.client_port);
     let port = client_lock.as_mut().ok_or("Modbus client is not connected")?;
 
     let _ = port.clear(serialport::ClearBuffer::All);

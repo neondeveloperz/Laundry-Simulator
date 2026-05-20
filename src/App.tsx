@@ -119,7 +119,16 @@ export default function App() {
       try {
         const update = await checkUpdate()
         if (update) {
-          addToast("info", `New update available: v${update.version}. Downloading...`)
+          // Ask user before installing
+          const confirmed = window.confirm(
+            `มีอัปเดตใหม่: v${update.version}\n\nต้องการดาวน์โหลดและติดตั้งเลยหรือไม่?`
+          )
+          if (!confirmed) {
+            addToast("info", `Skipped update v${update.version}`)
+            return
+          }
+
+          addToast("info", `Downloading update v${update.version}...`)
           
           await update.downloadAndInstall((event) => {
             switch (event.event) {

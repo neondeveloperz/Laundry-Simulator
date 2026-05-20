@@ -15,7 +15,7 @@ use tauri::{webview::PageLoadEvent, Manager};
 use tauri_plugin_log::{Target, TargetKind};
 use tauri_plugin_opener::OpenerExt;
 
-use state::AppState;
+use state::{AppState, safe_lock};
 
 // ── External-link navigation plugin ──────────────────────────
 // Intercepts navigation events: internal URLs pass through,
@@ -67,7 +67,7 @@ pub fn run() {
             let state  = app.state::<AppState>();
 
             // Store handle so AppState can emit events from any context
-            *state.app_handle.lock().unwrap() = Some(handle.clone());
+            *safe_lock(&state.app_handle) = Some(handle.clone());
 
             // Restore persisted fleet and settings
             state.load_machines();
@@ -75,25 +75,25 @@ pub fn run() {
 
             // Sync atomic flags from loaded config
             {
-                let cfg = state.config.lock().unwrap();
+                let cfg = safe_lock(&state.config);
                 state.simulation_enabled.store(cfg.simulation_enabled, Ordering::SeqCst);
                 state.simulation_speed.store(cfg.simulation_speed.clamp(1, 10), Ordering::SeqCst);
             }
 
             // Auto-restart Modbus server if the previous session had it running
             {
-                let cfg = state.config.lock().unwrap();
+                let cfg = safe_lock(&state.config);
                 if cfg.auto_start && !cfg.last_port.is_empty() {
                     let port = cfg.last_port.clone();
                     let baud = cfg.last_baud;
                     drop(cfg);
 
                     let stop_flag = Arc::new(AtomicBool::new(false));
-                    *state.modbus_stop.lock().unwrap() = Some(Arc::clone(&stop_flag));
-                    *state.modbus_port.lock().unwrap() = port.clone();
-                    *state.modbus_baud.lock().unwrap() = baud;
-                    *state.modbus_rx.lock().unwrap()   = 0;
-                    *state.modbus_tx.lock().unwrap()   = 0;
+                    *safe_lock(&state.modbus_stop) = Some(Arc::clone(&stop_flag));
+                    *safe_lock(&state.modbus_port) = port.clone();
+                    *safe_lock(&state.modbus_baud) = baud;
+                    *safe_lock(&state.modbus_rx)   = 0;
+                    *safe_lock(&state.modbus_tx)   = 0;
                     state.modbus_connected.store(true, Ordering::SeqCst);
 
                     let machines   = Arc::clone(&state.machines);

@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
 
-use crate::state::AppState;
+use crate::state::{AppState, safe_lock};
 use crate::types::{
     FaultConfig, LogEntry, Machine, MachineType, ModbusFrame, RegisterMapping, SimulatorConfig,
     TrafficLog,
@@ -203,7 +203,11 @@ fn fc03_response_dynamic(
     m: &Machine,
     map: &RegisterMapping,
     cfg: &SimulatorConfig,
-) -> Vec<u8> {
+) -> Option<Vec<u8>> {
+    // Modbus spec: max 125 registers per read request
+    if count == 0 || count > 125 {
+        return None;
+    }
     let base_addr = if start >= 40000 { start.saturating_sub(40000) } else { start };
     let mut resp = vec![unit_id, 0x03, (count * 2) as u8];
     for i in 0..count {
@@ -214,7 +218,7 @@ fn fc03_response_dynamic(
     let crc = crc16(&resp);
     resp.push((crc & 0xFF) as u8);
     resp.push((crc >> 8) as u8);
-    resp
+    Some(resp)
 }
 
 fn write_echo_response(frame: &[u8]) -> Vec<u8> {
@@ -323,7 +327,7 @@ pub fn modbus_server_thread(
                         continue;
                     }
 
-                    *rx_counter.lock().unwrap() += 1;
+                    *safe_lock(&rx_counter) += 1;
                     let rx_hex = raw.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
                     let _ = handle.emit("traffic-event", &TrafficLog {
                         direction: "RX".into(),
@@ -334,7 +338,7 @@ pub fn modbus_server_thread(
                     if let Some(decoded) = decode_modbus_pdu(&raw) {
                         let _ = handle.emit("modbus-frame", &decoded);
 
-                        let fault = fault_cfg.lock().unwrap().clone();
+                        let fault = safe_lock(&fault_cfg).clone();
 
                         if fault.timeout {
                             std::thread::sleep(Duration::from_secs(2));
@@ -351,8 +355,8 @@ pub fn modbus_server_thread(
                         }
 
                         let response: Option<Vec<u8>> = {
-                            let mut m_lock  = machines.lock().unwrap();
-                            let cfg_lock    = config.lock().unwrap();
+                            let mut m_lock  = safe_lock(&machines);
+                            let cfg_lock    = safe_lock(&config);
                             let machine = m_lock.iter_mut().find(|m| m.id == decoded.unit_id);
 
                             if let Some(m) = machine {
@@ -362,7 +366,7 @@ pub fn modbus_server_thread(
                                 };
                                 match decoded.function_code {
                                     0x03 | 0x04 => {
-                                        Some(fc03_response_dynamic(decoded.unit_id, decoded.address, decoded.quantity, m, map, &cfg_lock))
+                                        fc03_response_dynamic(decoded.unit_id, decoded.address, decoded.quantity, m, map, &cfg_lock)
                                     }
                                     0x06 => {
                                         apply_write_to_machine(decoded.address, decoded.quantity, m, &cfg_lock, map, &handle);
@@ -370,16 +374,25 @@ pub fn modbus_server_thread(
                                     }
                                     0x10 => {
                                         let count = decoded.quantity;
-                                        for i in 0..count {
-                                            if 9 + (i as usize)*2 + 1 < raw.len() {
-                                                let val = u16::from_be_bytes([raw[9 + i as usize * 2], raw[9 + i as usize * 2 + 1]]);
-                                                apply_write_to_machine(decoded.address + i, val, m, &cfg_lock, map, &handle);
+                                        // Validate: byte_count field must match quantity * 2
+                                        let byte_count = raw[6] as u16;
+                                        if byte_count != count * 2 {
+                                            None
+                                        } else {
+                                            for i in 0..count {
+                                                if 9 + (i as usize)*2 + 1 < raw.len() {
+                                                    let val = u16::from_be_bytes([raw[9 + i as usize * 2], raw[9 + i as usize * 2 + 1]]);
+                                                    apply_write_to_machine(decoded.address + i, val, m, &cfg_lock, map, &handle);
+                                                }
                                             }
+                                            // Build proper echo: unit_id, fc, addr(2), qty(2) + recalculated CRC
+                                            let echo_payload = raw[..6].to_vec();
+                                            let echo_crc = crc16(&echo_payload);
+                                            let mut echo_frame = echo_payload;
+                                            echo_frame.push((echo_crc & 0xFF) as u8);
+                                            echo_frame.push((echo_crc >> 8) as u8);
+                                            Some(echo_frame)
                                         }
-                                        let echo_frame: Vec<u8> = raw[..6].iter().cloned()
-                                            .chain([raw[raw.len()-2], raw[raw.len()-1]])
-                                            .collect();
-                                        Some(write_echo_response(&echo_frame))
                                     }
                                     _ => None,
                                 }
@@ -394,7 +407,7 @@ pub fn modbus_server_thread(
 
                             let tx_hex = resp.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
                             let _ = port.write_all(&resp);
-                            *tx_counter.lock().unwrap() += 1;
+                            *safe_lock(&tx_counter) += 1;
                             let _ = handle.emit("traffic-event", &TrafficLog {
                                 direction: "TX".into(),
                                 hex: tx_hex,
@@ -434,10 +447,10 @@ pub fn get_modbus_status(state: State<AppState>) -> crate::types::ModbusStatus {
     use std::sync::atomic::Ordering;
     crate::types::ModbusStatus {
         connected: state.modbus_connected.load(Ordering::SeqCst),
-        port:      state.modbus_port.lock().unwrap().clone(),
-        baud:      *state.modbus_baud.lock().unwrap(),
-        rx_count:  *state.modbus_rx.lock().unwrap(),
-        tx_count:  *state.modbus_tx.lock().unwrap(),
+        port:      safe_lock(&state.modbus_port).clone(),
+        baud:      *safe_lock(&state.modbus_baud),
+        rx_count:  *safe_lock(&state.modbus_rx),
+        tx_count:  *safe_lock(&state.modbus_tx),
     }
 }
 
@@ -445,20 +458,25 @@ pub fn get_modbus_status(state: State<AppState>) -> crate::types::ModbusStatus {
 pub fn start_modbus_server(port: String, baud: u32, state: State<AppState>, app: AppHandle) -> Result<(), String> {
     use std::sync::atomic::Ordering;
 
+    // Validate baud rate
+    if !matches!(baud, 2400 | 4800 | 9600 | 19200 | 38400 | 57600 | 115200) {
+        return Err(format!("Invalid baud rate: {}. Supported: 2400, 4800, 9600, 19200, 38400, 57600, 115200", baud));
+    }
+
     if state.modbus_connected.load(Ordering::SeqCst) {
         return Err("Modbus server is already running".into());
     }
 
     let stop_flag = Arc::new(AtomicBool::new(false));
-    *state.modbus_stop.lock().unwrap() = Some(Arc::clone(&stop_flag));
-    *state.modbus_port.lock().unwrap() = port.clone();
-    *state.modbus_baud.lock().unwrap() = baud;
-    *state.modbus_rx.lock().unwrap() = 0;
-    *state.modbus_tx.lock().unwrap() = 0;
+    *safe_lock(&state.modbus_stop) = Some(Arc::clone(&stop_flag));
+    *safe_lock(&state.modbus_port) = port.clone();
+    *safe_lock(&state.modbus_baud) = baud;
+    *safe_lock(&state.modbus_rx) = 0;
+    *safe_lock(&state.modbus_tx) = 0;
     state.modbus_connected.store(true, Ordering::SeqCst);
 
     {
-        let mut cfg = state.config.lock().unwrap();
+        let mut cfg = safe_lock(&state.config);
         cfg.auto_start = true;
         cfg.last_port  = port.clone();
         cfg.last_baud  = baud;
@@ -486,13 +504,13 @@ pub fn stop_modbus_server(state: State<AppState>) -> Result<(), String> {
     if !state.modbus_connected.load(Ordering::SeqCst) {
         return Err("Modbus server is not running".into());
     }
-    if let Some(flag) = state.modbus_stop.lock().unwrap().take() {
+    if let Some(flag) = safe_lock(&state.modbus_stop).take() {
         flag.store(true, Ordering::SeqCst);
     }
     state.modbus_connected.store(false, Ordering::SeqCst);
 
     {
-        let mut cfg = state.config.lock().unwrap();
+        let mut cfg = safe_lock(&state.config);
         cfg.auto_start = false;
     }
     state.save_config();
@@ -502,11 +520,11 @@ pub fn stop_modbus_server(state: State<AppState>) -> Result<(), String> {
 
 #[tauri::command]
 pub fn set_fault_mode(config: FaultConfig, state: State<AppState>) -> Result<(), String> {
-    *state.fault_config.lock().unwrap() = config;
+    *safe_lock(&state.fault_config) = config;
     Ok(())
 }
 
 #[tauri::command]
 pub fn get_fault_config(state: State<AppState>) -> FaultConfig {
-    state.fault_config.lock().unwrap().clone()
+    safe_lock(&state.fault_config).clone()
 }

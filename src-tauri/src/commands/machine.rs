@@ -4,20 +4,20 @@
 use tauri::State;
 
 use crate::programs::{get_program_duration, get_program_price};
-use crate::state::AppState;
+use crate::state::{AppState, safe_lock};
 use crate::types::{Machine, MachineState, MachineType};
 
 // ── CRUD ─────────────────────────────────────────────────────
 
 #[tauri::command]
 pub fn get_all_machines(state: State<AppState>) -> Vec<Machine> {
-    state.machines.lock().unwrap().clone()
+    safe_lock(&state.machines).clone()
 }
 
 #[tauri::command]
 pub fn add_machine(machine_type_str: String, unit_id: u8, state: State<AppState>) -> Result<Machine, String> {
     let machine = {
-        let mut m = state.machines.lock().unwrap();
+        let mut m = safe_lock(&state.machines);
         if m.iter().any(|m| m.id == unit_id) {
             return Err(format!("Unit ID {} is already in use", unit_id));
         }
@@ -38,7 +38,7 @@ pub fn add_machine(machine_type_str: String, unit_id: u8, state: State<AppState>
 #[tauri::command]
 pub fn remove_machine(unit_id: u8, state: State<AppState>) -> Result<(), String> {
     {
-        let mut m = state.machines.lock().unwrap();
+        let mut m = safe_lock(&state.machines);
         let pos = m.iter().position(|m| m.id == unit_id).ok_or("Machine not found")?;
         m.remove(pos);
     }
@@ -51,16 +51,16 @@ pub fn remove_machine(unit_id: u8, state: State<AppState>) -> Result<(), String>
 
 #[tauri::command]
 pub fn insert_coin(machine_id: u8, amount: u32, state: State<AppState>) -> Result<Machine, String> {
-    let mut m = state.machines.lock().unwrap();
+    let mut m = safe_lock(&state.machines);
     let machine = m.iter_mut().find(|m| m.id == machine_id).ok_or("Machine not found")?;
-    machine.coins += amount;
+    machine.coins = machine.coins.saturating_add(amount);
     state.emit_log("INFO", &format!("User: Inserted {}฿ into machine #{}", amount, machine_id));
     Ok(machine.clone())
 }
 
 #[tauri::command]
 pub fn clear_coins(machine_id: u8, state: State<AppState>) -> Result<Machine, String> {
-    let mut m = state.machines.lock().unwrap();
+    let mut m = safe_lock(&state.machines);
     let machine = m.iter_mut().find(|m| m.id == machine_id).ok_or("Machine not found")?;
     machine.coins = 0;
     state.emit_log("INFO", &format!("User: Cleared coins on machine #{}", machine_id));
@@ -69,7 +69,7 @@ pub fn clear_coins(machine_id: u8, state: State<AppState>) -> Result<Machine, St
 
 #[tauri::command]
 pub fn start_machine(machine_id: u8, state: State<AppState>) -> Result<Machine, String> {
-    let mut m = state.machines.lock().unwrap();
+    let mut m = safe_lock(&state.machines);
     let machine = m.iter_mut().find(|m| m.id == machine_id).ok_or("Machine not found")?;
 
     // Guard: door must be closed
@@ -80,7 +80,7 @@ pub fn start_machine(machine_id: u8, state: State<AppState>) -> Result<Machine, 
         return Err(format!("Cannot start: Machine is busy ({:?})", machine.state));
     }
 
-    let cfg   = state.config.lock().unwrap();
+    let cfg   = safe_lock(&state.config);
     let price = get_program_price(machine.machine_type, machine.program, &cfg);
     if machine.coins < price {
         return Err(format!("Insufficient coins (need ≥ {}฿, have {}฿)", price, machine.coins));
@@ -105,7 +105,7 @@ pub fn start_machine(machine_id: u8, state: State<AppState>) -> Result<Machine, 
 
 #[tauri::command]
 pub fn stop_machine(machine_id: u8, state: State<AppState>) -> Result<Machine, String> {
-    let mut m = state.machines.lock().unwrap();
+    let mut m = safe_lock(&state.machines);
     let machine = m.iter_mut().find(|m| m.id == machine_id).ok_or("Machine not found")?;
     machine.state          = MachineState::Idle;
     machine.door_status    = 2;
@@ -119,7 +119,7 @@ pub fn stop_machine(machine_id: u8, state: State<AppState>) -> Result<Machine, S
 
 #[tauri::command]
 pub fn advance_state(machine_id: u8, state: State<AppState>) -> Result<Machine, String> {
-    let mut m = state.machines.lock().unwrap();
+    let mut m = safe_lock(&state.machines);
     let machine = m.iter_mut().find(|m| m.id == machine_id).ok_or("Machine not found")?;
     let old = format!("{:?}", machine.state);
 
@@ -145,12 +145,12 @@ pub fn advance_state(machine_id: u8, state: State<AppState>) -> Result<Machine, 
 
 #[tauri::command]
 pub fn set_program(machine_id: u8, program: u8, state: State<AppState>) -> Result<Machine, String> {
-    let mut m = state.machines.lock().unwrap();
+    let mut m = safe_lock(&state.machines);
     let machine = m.iter_mut().find(|m| m.id == machine_id).ok_or("Machine not found")?;
     if machine.state != MachineState::Idle && machine.state != MachineState::Completed {
         return Err("Cannot change program while running".into());
     }
-    let cfg = state.config.lock().unwrap();
+    let cfg = safe_lock(&state.config);
     let progs = match machine.machine_type {
         MachineType::Washer => &cfg.washer_programs,
         MachineType::Dryer  => &cfg.dryer_programs,
@@ -168,7 +168,7 @@ pub fn set_program(machine_id: u8, program: u8, state: State<AppState>) -> Resul
 
 #[tauri::command]
 pub fn toggle_door(machine_id: u8, state: State<AppState>) -> Result<Machine, String> {
-    let mut m = state.machines.lock().unwrap();
+    let mut m = safe_lock(&state.machines);
     let machine = m.iter_mut().find(|m| m.id == machine_id).ok_or("Machine not found")?;
     match machine.door_status {
         1 => { machine.door_status = 2; state.emit_log("INFO", &format!("User: Closed door on machine #{}", machine_id)); }
@@ -181,7 +181,7 @@ pub fn toggle_door(machine_id: u8, state: State<AppState>) -> Result<Machine, St
 
 #[tauri::command]
 pub fn toggle_door_lock(machine_id: u8, state: State<AppState>) -> Result<Machine, String> {
-    let mut m = state.machines.lock().unwrap();
+    let mut m = safe_lock(&state.machines);
     let machine = m.iter_mut().find(|m| m.id == machine_id).ok_or("Machine not found")?;
     if machine.door_status == 2 {
         machine.door_status = 5;
@@ -197,7 +197,7 @@ pub fn toggle_door_lock(machine_id: u8, state: State<AppState>) -> Result<Machin
 
 #[tauri::command]
 pub fn trigger_error(machine_id: u8, error_code: u32, state: State<AppState>) -> Result<Machine, String> {
-    let mut m = state.machines.lock().unwrap();
+    let mut m = safe_lock(&state.machines);
     let machine = m.iter_mut().find(|m| m.id == machine_id).ok_or("Machine not found")?;
     machine.state      = MachineState::Error;
     machine.error_code = error_code;
@@ -214,7 +214,7 @@ pub fn trigger_error(machine_id: u8, error_code: u32, state: State<AppState>) ->
 
 #[tauri::command]
 pub fn clear_error(machine_id: u8, state: State<AppState>) -> Result<Machine, String> {
-    let mut m = state.machines.lock().unwrap();
+    let mut m = safe_lock(&state.machines);
     let machine = m.iter_mut().find(|m| m.id == machine_id).ok_or("Machine not found")?;
     machine.state       = MachineState::Idle;
     machine.error_code  = 0;
@@ -228,8 +228,8 @@ pub fn clear_error(machine_id: u8, state: State<AppState>) -> Result<Machine, St
 
 #[tauri::command]
 pub fn bulk_start_machines(state: State<AppState>) -> Result<(), String> {
-    let mut m   = state.machines.lock().unwrap();
-    let cfg     = state.config.lock().unwrap();
+    let mut m   = safe_lock(&state.machines);
+    let cfg     = safe_lock(&state.config);
     let mut count = 0u32;
 
     for machine in m.iter_mut() {
@@ -256,7 +256,7 @@ pub fn bulk_start_machines(state: State<AppState>) -> Result<(), String> {
 
 #[tauri::command]
 pub fn bulk_stop_machines(state: State<AppState>) -> Result<(), String> {
-    let mut m = state.machines.lock().unwrap();
+    let mut m = safe_lock(&state.machines);
     for machine in m.iter_mut() {
         machine.state          = MachineState::Idle;
         machine.door_status    = 2;

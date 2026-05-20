@@ -8,6 +8,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
 use crate::programs::get_active_step_details;
+use crate::state::safe_lock;
 use crate::types::{Machine, MachineState, SimulatorConfig};
 
 pub fn simulation_loop(
@@ -38,8 +39,8 @@ pub fn simulation_loop(
 
         let mut changed = false;
         {
-            let mut machines = machines.lock().unwrap();
-            let cfg = config.lock().unwrap();
+            let mut machines = safe_lock(&machines);
+            let cfg = safe_lock(&config);
 
             for m in machines.iter_mut() {
                 // ── Door animation timer ──────────────────────
