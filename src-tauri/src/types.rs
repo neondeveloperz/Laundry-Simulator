@@ -291,21 +291,8 @@ pub struct ModbusFrame {
 }
 
 // ============================================================
-// SCENARIOS & FAULT INJECTION
+// FAULT INJECTION
 // ============================================================
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ScenarioEvent {
-    pub time_offset_sec: u32,
-    pub unit_id: u8,
-    pub action: String, // "START", "STOP", "COIN", "ERROR_1"
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Scenario {
-    pub name: String,
-    pub events: Vec<ScenarioEvent>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FaultConfig {

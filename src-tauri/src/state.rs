@@ -6,12 +6,11 @@ use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::types::{LogEntry, Machine, SimulatorConfig, FaultConfig, Scenario, TrafficLog};
+use crate::types::{LogEntry, Machine, SimulatorConfig, FaultConfig};
 
 pub struct AppState {
     pub machines:          Arc<Mutex<Vec<Machine>>>,
     pub config:            Arc<Mutex<SimulatorConfig>>,
-    pub scenarios:         Arc<Mutex<Vec<Scenario>>>,
     pub app_handle:        Mutex<Option<AppHandle>>,
     pub fault_config:      Arc<Mutex<FaultConfig>>,
     // Modbus server
@@ -34,7 +33,6 @@ impl AppState {
         AppState {
             machines:          Arc::new(Mutex::new(Vec::new())),
             config:            Arc::new(Mutex::new(SimulatorConfig::default())),
-            scenarios:         Arc::new(Mutex::new(Vec::new())),
             app_handle:        Mutex::new(None),
             fault_config:      Arc::new(Mutex::new(FaultConfig::default())),
             modbus_stop:       Mutex::new(None),
@@ -130,25 +128,6 @@ impl AppState {
                     let _ = writeln!(file, "[{}] {}: {}", timestamp, level, msg);
                 }
             }
-        }
-    }
-
-    /// Emit raw byte traffic to the frontend hex-traffic panel.
-    pub fn emit_traffic(&self, direction: &str, bytes: &[u8]) {
-        if let Some(handle) = self.app_handle.lock().unwrap().as_ref() {
-            let hex = bytes
-                .iter()
-                .map(|b| format!("{:02X}", b))
-                .collect::<Vec<_>>()
-                .join(" ");
-            let entry = TrafficLog {
-                direction: direction.to_string(),
-                hex,
-                timestamp: chrono::Local::now()
-                    .format("%Y-%m-%d %H:%M:%S%.3f")
-                    .to_string(),
-            };
-            let _ = handle.emit("traffic-event", &entry);
         }
     }
 }

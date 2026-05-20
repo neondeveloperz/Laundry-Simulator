@@ -1,5 +1,5 @@
 // Path: src/components/modbus/Rs485Panel.tsx
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import {
   Cable, RefreshCw, Plug, Unplug,
   Clock, AlertCircle, AlertTriangle,
@@ -38,24 +38,15 @@ export function Rs485Panel({ onToast, onRefresh }: Rs485PanelProps) {
   const [status, setStatus]   = useState<ModbusStatus | null>(null)
   const [fault, setFault]     = useState<FaultConfig>({ timeout: false, crc_error: false, exception_code: 0 })
   const [loading, setLoading] = useState(false)
+  const initializedRef = useRef(false)
 
   // ── Polling ──────────────────────────────────────────────────
   const refreshPorts = useCallback(async () => {
     const list = await listSerialPorts()
     setPorts(list)
-    if (list.length > 0 && !port) setPort(list[0])
-  }, [port])
-
-  const loadSavedConfig = useCallback(async () => {
-    try {
-      const cfg = await getConfig()
-      if (cfg.last_port) {
-        setPort(cfg.last_port)
-      }
-      if (cfg.last_baud) {
-        setBaud(cfg.last_baud)
-      }
-    } catch { /* ignore */ }
+    // Only auto-select the first port if no port is set yet
+    // Use functional setState to avoid depending on `port` state
+    setPort(prev => (prev === "" && list.length > 0) ? list[0] : prev)
   }, [])
 
   const pollStatus = useCallback(async () => {
@@ -66,14 +57,29 @@ export function Rs485Panel({ onToast, onRefresh }: Rs485PanelProps) {
     try { setFault(await getFaultConfig()) } catch { /* ignore */ }
   }, [])
 
+  // Initial mount: load saved config, refresh ports, start polling
   useEffect(() => {
-    refreshPorts()
-    loadSavedConfig()
-    pollStatus()
-    fetchFaults()
+    if (initializedRef.current) return
+    initializedRef.current = true
+
+    const init = async () => {
+      // Load saved config first so it takes priority
+      try {
+        const cfg = await getConfig()
+        if (cfg.last_port) setPort(cfg.last_port)
+        if (cfg.last_baud) setBaud(cfg.last_baud)
+      } catch { /* ignore */ }
+
+      // Then refresh ports (won't overwrite if port is already set)
+      await refreshPorts()
+      await pollStatus()
+      await fetchFaults()
+    }
+    init()
+
     const t = setInterval(pollStatus, 1500)
     return () => clearInterval(t)
-  }, [refreshPorts, loadSavedConfig, pollStatus, fetchFaults])
+  }, [refreshPorts, pollStatus, fetchFaults])
 
   // ── Actions ──────────────────────────────────────────────────
   const handleConnect = async () => {

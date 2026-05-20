@@ -47,11 +47,10 @@ export function VirtualPlcView({ onToast }: VirtualPlcViewProps) {
     try {
       const list = await listSerialPorts()
       setPorts(list)
-      if (list.length > 0 && !selectedPort) {
-        setSelectedPort(list[0])
-      }
+      // Use functional setState to avoid depending on `selectedPort`
+      setSelectedPort(prev => (prev === "" && list.length > 0) ? list[0] : prev)
     } catch { /* ignore */ }
-  }, [selectedPort])
+  }, [])
 
   const checkStatus = useCallback(async () => {
     try {
