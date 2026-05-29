@@ -2090,7 +2090,7 @@ dependencies = [
 
 [[package]]
 name = "laundry-simulator"
-version = "2.0.4"
+version = "2.0.5"
 dependencies = [
  "chrono",
  "log",
