@@ -1,6 +1,5 @@
 // Path: src/components/monitoring/EventStreamView.tsx
 import { useState, useEffect, useRef } from "react"
-import { listen } from "@tauri-apps/api/event"
 import { ScrollText, Trash2, PauseCircle, PlayCircle, Filter } from "lucide-react"
 import type { LogEntry } from "@/types"
 import { Button } from "@/components/ui/button"
@@ -17,23 +16,18 @@ const LEVEL_STYLE: Record<string, string> = {
 const LEVELS = ["ALL", "INFO", "MODBUS", "ERROR", "SCENARIO"] as const
 type Level = typeof LEVELS[number]
 
-export function EventStreamView() {
-  const [logs, setLogs]       = useState<LogEntry[]>([])
+export interface EventStreamViewProps {
+  logs: LogEntry[]
+  onClear: () => void
+}
+
+export function EventStreamView({ logs, onClear }: EventStreamViewProps) {
   const [paused, setPaused]   = useState(false)
   const [filter, setFilter]   = useState<Level>("ALL")
   const bottomRef             = useRef<HTMLDivElement>(null)
   const pausedRef             = useRef(false)
 
   pausedRef.current = paused
-
-  useEffect(() => {
-    const unlisten = listen<LogEntry>("log-event", e => {
-      if (!pausedRef.current) {
-        setLogs(prev => [...prev.slice(-999), e.payload])
-      }
-    })
-    return () => { unlisten.then(fn => fn()) }
-  }, [])
 
   // Auto-scroll when not paused
   useEffect(() => {
@@ -86,7 +80,7 @@ export function EventStreamView() {
             size="sm"
             variant="ghost"
             className="h-7 px-2 gap-1 text-xs text-destructive hover:bg-destructive/10"
-            onClick={() => setLogs([])}
+            onClick={onClear}
           >
             <Trash2 size={13} /> Clear
           </Button>

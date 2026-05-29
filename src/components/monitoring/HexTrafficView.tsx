@@ -1,6 +1,5 @@
 // Path: src/components/monitoring/HexTrafficView.tsx
 import { useState, useEffect, useRef } from "react"
-import { listen } from "@tauri-apps/api/event"
 import { Binary, Trash2, PauseCircle, PlayCircle, ArrowDown } from "lucide-react"
 import type { ModbusFrame } from "@/types"
 import { Button } from "@/components/ui/button"
@@ -14,8 +13,12 @@ const FC_NAMES: Record<number, string> = {
   0x10: "FC10 Write Multi",
 }
 
-export function HexTrafficView() {
-  const [frames, setFrames]   = useState<ModbusFrame[]>([])
+export interface HexTrafficViewProps {
+  frames: ModbusFrame[]
+  onClear: () => void
+}
+
+export function HexTrafficView({ frames, onClear }: HexTrafficViewProps) {
   const [paused, setPaused]   = useState(false)
   const [filter, setFilter]   = useState<number | null>(null) // unit_id filter
   const [search, setSearch]   = useState("")
@@ -23,15 +26,6 @@ export function HexTrafficView() {
   const pausedRef             = useRef(false)
 
   pausedRef.current = paused
-
-  useEffect(() => {
-    const unlisten = listen<ModbusFrame>("modbus-frame", e => {
-      if (!pausedRef.current) {
-        setFrames(prev => [...prev.slice(-499), e.payload])
-      }
-    })
-    return () => { unlisten.then(fn => fn()) }
-  }, [])
 
   useEffect(() => {
     if (!paused) {
@@ -115,7 +109,7 @@ export function HexTrafficView() {
             size="sm"
             variant="ghost"
             className="h-7 px-2 gap-1 text-xs text-destructive hover:bg-destructive/10"
-            onClick={() => setFrames([])}
+            onClick={onClear}
           >
             <Trash2 size={13} /> Clear
           </Button>

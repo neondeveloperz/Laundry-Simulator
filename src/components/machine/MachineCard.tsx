@@ -330,9 +330,10 @@ export function MachineCard({ machine, onRefresh, onToast, config }: MachineCard
           variant="outline"
           className="h-8 px-2 text-xs"
           disabled={isActive}
-          onClick={() => cmd("insert_coin", { machineId: machine.id, amount: 10 })}
+          onClick={() => cmd("insert_coin", { machineId: machine.id, amount: currentPrice })}
+          title={`Insert exact price (${currentPrice}฿)`}
         >
-          +10฿
+          +{currentPrice}฿
         </Button>
         <Button
           size="sm"

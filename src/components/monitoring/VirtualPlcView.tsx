@@ -7,10 +7,11 @@ import {
   stopModbusClient,
   getModbusClientStatus,
   modbusClientRequest,
+  getConfig,
 } from "@/lib/commands"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import type { Toast } from "@/types"
+import type { Toast, SimulatorConfig } from "@/types"
 
 interface VirtualPlcViewProps {
   onToast: (type: Toast["type"], msg: string) => void
@@ -33,6 +34,11 @@ export function VirtualPlcView({ onToast }: VirtualPlcViewProps) {
   const [baud, setBaud]               = useState(9600)
   const [connected, setConnected]     = useState(false)
   const [loading, setLoading]         = useState(false)
+
+  // Config-driven presets
+  const [config, setConfig]           = useState<SimulatorConfig | null>(null)
+  const [washerProg, setWasherProg]   = useState(1)
+  const [dryerProg, setDryerProg]     = useState(1)
 
   // Custom request states
   const [unitId, setUnitId]           = useState(1)
@@ -59,12 +65,33 @@ export function VirtualPlcView({ onToast }: VirtualPlcViewProps) {
     } catch { /* ignore */ }
   }, [])
 
+  const loadConfig = useCallback(async () => {
+    try {
+      const cfg = await getConfig()
+      setConfig(cfg)
+    } catch { /* ignore */ }
+  }, [])
+
   useEffect(() => {
     refreshPorts()
     checkStatus()
+    loadConfig()
     const t = setInterval(checkStatus, 2000)
     return () => clearInterval(t)
-  }, [refreshPorts, checkStatus])
+  }, [refreshPorts, checkStatus, loadConfig])
+
+  // Helper to get program price from config
+  const getPrice = (type: "washer" | "dryer", progId: number): number => {
+    if (!config) return 0
+    const programs = type === "washer" ? config.washer_programs : config.dryer_programs
+    return programs.find(p => p.id === progId)?.price ?? 0
+  }
+
+  // Helper to get register mapping
+  const getMapping = (type: "washer" | "dryer") => {
+    if (!config) return null
+    return type === "washer" ? config.washer_mapping : config.dryer_mapping
+  }
 
   const handleConnect = async () => {
     if (!selectedPort) {
@@ -243,25 +270,45 @@ export function VirtualPlcView({ onToast }: VirtualPlcViewProps) {
                 <div className="rounded-lg border bg-muted/10 p-3 space-y-3">
                   <span className="font-bold text-xs text-blue-500 block">Washer Presets (Slave 1)</span>
                   
+                  {/* Program selector */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-muted-foreground font-bold">Program:</span>
+                    <select
+                      value={washerProg}
+                      onChange={e => setWasherProg(Number(e.target.value))}
+                      className="h-7 px-2 border bg-background rounded text-[10px] flex-1 focus:ring-1 focus:ring-primary focus:outline-none"
+                    >
+                      {(config?.washer_programs ?? []).map(p => (
+                        <option key={p.id} value={p.id}>{p.label} — {p.price}฿</option>
+                      ))}
+                    </select>
+                  </div>
+
                   <div className="flex flex-col gap-2">
                     <div className="flex gap-2">
                       <Button
                         size="sm"
                         variant="outline"
-                        disabled={!connected}
-                        onClick={() => sendRequest({ unitId: 1, fc: 6, address: 3, valueOrQty: 30 })}
+                        disabled={!connected || !config}
+                        onClick={() => {
+                          const m = getMapping("washer")
+                          if (m) sendRequest({ unitId: 1, fc: 6, address: m.write_coins, valueOrQty: getPrice("washer", washerProg) })
+                        }}
                         className="flex-1 text-[10px] h-7 bg-card"
                       >
-                        Insert 30 Coins (Add. 3)
+                        Insert {getPrice("washer", washerProg)}฿
                       </Button>
                       <Button
                         size="sm"
                         variant="outline"
-                        disabled={!connected}
-                        onClick={() => sendRequest({ unitId: 1, fc: 6, address: 4, valueOrQty: 2 })}
+                        disabled={!connected || !config}
+                        onClick={() => {
+                          const m = getMapping("washer")
+                          if (m) sendRequest({ unitId: 1, fc: 6, address: m.write_program, valueOrQty: washerProg })
+                        }}
                         className="flex-1 text-[10px] h-7 bg-card"
                       >
-                        Select Prog 2 (Add. 4)
+                        Select Prog {washerProg}
                       </Button>
                     </div>
 
@@ -269,20 +316,26 @@ export function VirtualPlcView({ onToast }: VirtualPlcViewProps) {
                       <Button
                         size="sm"
                         variant="outline"
-                        disabled={!connected}
-                        onClick={() => sendRequest({ unitId: 1, fc: 6, address: 1, valueOrQty: 1 })}
+                        disabled={!connected || !config}
+                        onClick={() => {
+                          const m = getMapping("washer")
+                          if (m) sendRequest({ unitId: 1, fc: 6, address: m.write_start, valueOrQty: 1 })
+                        }}
                         className="flex-1 text-[10px] h-7 bg-card"
                       >
-                        Start Program (Add. 1)
+                        Start Program
                       </Button>
                       <Button
                         size="sm"
                         variant="outline"
-                        disabled={!connected}
-                        onClick={() => sendRequest({ unitId: 1, fc: 6, address: 3, valueOrQty: 1 })}
+                        disabled={!connected || !config}
+                        onClick={() => {
+                          const m = getMapping("washer")
+                          if (m) sendRequest({ unitId: 1, fc: 6, address: m.write_stop, valueOrQty: 1 })
+                        }}
                         className="flex-1 text-[10px] h-7 bg-card text-red-500 hover:text-red-600 hover:bg-red-500/10"
                       >
-                        Force Stop (Add. 3)
+                        Force Stop
                       </Button>
                     </div>
 
@@ -290,10 +343,10 @@ export function VirtualPlcView({ onToast }: VirtualPlcViewProps) {
                       size="sm"
                       variant="outline"
                       disabled={!connected}
-                      onClick={() => sendRequest({ unitId: 1, fc: 3, address: 0, valueOrQty: 6 })}
+                      onClick={() => sendRequest({ unitId: 1, fc: 3, address: 20, valueOrQty: 21 })}
                       className="text-[10px] h-7 bg-card border-blue-500/20 text-blue-500 hover:bg-blue-500/5"
                     >
-                      Read Control States (FC03, Add. 0 Qty 6)
+                      Read All Registers (FC03, Add. 20 Qty 21)
                     </Button>
                   </div>
                 </div>
@@ -302,25 +355,45 @@ export function VirtualPlcView({ onToast }: VirtualPlcViewProps) {
                 <div className="rounded-lg border bg-muted/10 p-3 space-y-3">
                   <span className="font-bold text-xs text-orange-500 block">Dryer Presets (Slave 2)</span>
                   
+                  {/* Program selector */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-muted-foreground font-bold">Program:</span>
+                    <select
+                      value={dryerProg}
+                      onChange={e => setDryerProg(Number(e.target.value))}
+                      className="h-7 px-2 border bg-background rounded text-[10px] flex-1 focus:ring-1 focus:ring-primary focus:outline-none"
+                    >
+                      {(config?.dryer_programs ?? []).map(p => (
+                        <option key={p.id} value={p.id}>{p.label} — {p.price}฿</option>
+                      ))}
+                    </select>
+                  </div>
+
                   <div className="flex flex-col gap-2">
                     <div className="flex gap-2">
                       <Button
                         size="sm"
                         variant="outline"
-                        disabled={!connected}
-                        onClick={() => sendRequest({ unitId: 2, fc: 6, address: 3, valueOrQty: 40 })}
+                        disabled={!connected || !config}
+                        onClick={() => {
+                          const m = getMapping("dryer")
+                          if (m) sendRequest({ unitId: 2, fc: 6, address: m.write_coins, valueOrQty: getPrice("dryer", dryerProg) })
+                        }}
                         className="flex-1 text-[10px] h-7 bg-card"
                       >
-                        Insert 40 Coins (Add. 3)
+                        Insert {getPrice("dryer", dryerProg)}฿
                       </Button>
                       <Button
                         size="sm"
                         variant="outline"
-                        disabled={!connected}
-                        onClick={() => sendRequest({ unitId: 2, fc: 6, address: 4, valueOrQty: 3 })}
+                        disabled={!connected || !config}
+                        onClick={() => {
+                          const m = getMapping("dryer")
+                          if (m) sendRequest({ unitId: 2, fc: 6, address: m.write_program, valueOrQty: dryerProg })
+                        }}
                         className="flex-1 text-[10px] h-7 bg-card"
                       >
-                        Select Prog 3 (Add. 4)
+                        Select Prog {dryerProg}
                       </Button>
                     </div>
 
@@ -328,20 +401,26 @@ export function VirtualPlcView({ onToast }: VirtualPlcViewProps) {
                       <Button
                         size="sm"
                         variant="outline"
-                        disabled={!connected}
-                        onClick={() => sendRequest({ unitId: 2, fc: 6, address: 1, valueOrQty: 1 })}
+                        disabled={!connected || !config}
+                        onClick={() => {
+                          const m = getMapping("dryer")
+                          if (m) sendRequest({ unitId: 2, fc: 6, address: m.write_start, valueOrQty: 1 })
+                        }}
                         className="flex-1 text-[10px] h-7 bg-card"
                       >
-                        Start Program (Add. 1)
+                        Start Program
                       </Button>
                       <Button
                         size="sm"
                         variant="outline"
-                        disabled={!connected}
-                        onClick={() => sendRequest({ unitId: 2, fc: 6, address: 0, valueOrQty: 1 })}
+                        disabled={!connected || !config}
+                        onClick={() => {
+                          const m = getMapping("dryer")
+                          if (m) sendRequest({ unitId: 2, fc: 6, address: m.write_error_reset, valueOrQty: 1 })
+                        }}
                         className="flex-1 text-[10px] h-7 bg-card text-red-500 hover:text-red-600 hover:bg-red-500/10"
                       >
-                        Reset/Silence (Add. 0)
+                        Reset/Silence
                       </Button>
                     </div>
 
@@ -349,10 +428,10 @@ export function VirtualPlcView({ onToast }: VirtualPlcViewProps) {
                       size="sm"
                       variant="outline"
                       disabled={!connected}
-                      onClick={() => sendRequest({ unitId: 2, fc: 3, address: 0, valueOrQty: 5 })}
+                      onClick={() => sendRequest({ unitId: 2, fc: 3, address: 20, valueOrQty: 21 })}
                       className="text-[10px] h-7 bg-card border-orange-500/20 text-orange-500 hover:bg-orange-500/5"
                     >
-                      Read Control States (FC03, Add. 0 Qty 5)
+                      Read All Registers (FC03, Add. 20 Qty 21)
                     </Button>
                   </div>
                 </div>

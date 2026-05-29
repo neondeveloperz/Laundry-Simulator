@@ -12,7 +12,7 @@ import {
   type LucideIcon,
 } from "lucide-react"
 import { getAllMachines, getConfig, getModbusStatus, setSimulationMode } from "@/lib/commands"
-import type { Machine, SimulatorConfig, LogEntry, ModbusStatus } from "@/types"
+import type { Machine, SimulatorConfig, LogEntry, ModbusStatus, ModbusFrame } from "@/types"
 import { useToast } from "@/hooks/useToast"
 import { check as checkUpdate } from "@tauri-apps/plugin-updater"
 import { relaunch } from "@tauri-apps/plugin-process"
@@ -61,6 +61,7 @@ export default function App() {
   const [config, setConfig] = useState<SimulatorConfig | null>(null)
   const [modbusStatus, setModbus] = useState<ModbusStatus | null>(null)
   const [logs, setLogs] = useState<LogEntry[]>([])
+  const [frames, setFrames] = useState<ModbusFrame[]>([])
   const [simEnabled, setSimEnabled] = useState(true)
   const [simSpeed, setSimSpeed] = useState(1)
   const { toasts, show: addToast } = useToast()
@@ -98,18 +99,24 @@ export default function App() {
 
     const t1 = setInterval(fetchMachines, 2000)
     const t2 = setInterval(pollModbus, 1500)
+    const t3 = setInterval(fetchConfig, 3000)
 
     // Fast refresh on simulation tick events
     const unlistenUpdated = listen("machines-updated", () => fetchMachines())
 
     const unlistenLog = listen<LogEntry>("log-event", e =>
-      setLogs(prev => [...prev.slice(-199), e.payload])
+      setLogs(prev => [...prev.slice(-999), e.payload])
+    )
+    const unlistenFrame = listen<ModbusFrame>("modbus-frame", e =>
+      setFrames(prev => [...prev.slice(-499), e.payload])
     )
     return () => {
       clearInterval(t1)
       clearInterval(t2)
+      clearInterval(t3)
       unlistenUpdated.then(fn => fn())
       unlistenLog.then(fn => fn())
+      unlistenFrame.then(fn => fn())
     }
   }, [fetchMachines, fetchConfig, pollModbus])
 
@@ -291,13 +298,13 @@ export default function App() {
         )
 
       case "logs":
-        return <EventStreamView />
+        return <EventStreamView logs={logs} onClear={() => setLogs([])} />
 
       case "registers":
         return <RegisterView />
 
       case "hex":
-        return <HexTrafficView />
+        return <HexTrafficView frames={frames} onClear={() => setFrames([])} />
 
       case "programs":
         return <ProgramEditorView onToast={addToast} />

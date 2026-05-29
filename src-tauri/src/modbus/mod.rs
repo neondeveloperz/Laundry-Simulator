@@ -51,29 +51,28 @@ fn state_code(state: &crate::types::MachineState) -> u16 {
 fn get_register_value(addr: u16, m: &Machine, map: &RegisterMapping, cfg: &SimulatorConfig) -> u16 {
     if m.machine_type == crate::types::MachineType::Dryer {
         // Dryer custom mapping
-        if      addr == 20 { state_code(&m.state) }
-        else if addr == 21 { if m.door_status == 1 { 0 } else { 1 } }
-        else if addr == 22 { if m.error_code > 0 { 1 } else { 0 } }
-        else if addr == 23 { (m.time_remaining / 3600) as u16 }
-        else if addr == 24 { ((m.time_remaining % 3600) / 60) as u16 }
-        else if addr == 25 { (m.time_remaining % 60) as u16 }
-        else if addr == 26 {
-            // Inlet temperature (e.g. set temp of current step, or slightly higher)
+        if      addr == map.state       { state_code(&m.state) }
+        else if addr == map.door_status { if m.door_status == 1 { 0 } else { 1 } }
+        else if addr == map.error_flag  { if m.error_code > 0 { 1 } else { 0 } }
+        else if addr == map.time_min    { (m.time_remaining / 60) as u16 } // Total minutes
+        else if addr == map.time_sec    { (m.time_remaining % 60) as u16 } // Total seconds
+        else if addr == map.time_min+2  { (m.time_remaining / 3600) as u16 } // Total hours
+        else if addr == map.temperature { m.temperature as u16 } // Outlet temperature (exhaust)
+        else if addr == map.temperature+1 { // Inlet temperature / Target temp
             let (_, step, _) = crate::programs::get_active_step_details(m.machine_type, m.program, m.time_remaining, cfg);
             if m.time_remaining > 0 { step.target_temp as u16 } else { 0 }
         }
-        else if addr == 27 { m.temperature as u16 } // Outlet temperature (exhaust)
-        else if addr == 28 { m.program as u16 }
-        else if addr == 29 {
+        else if addr == map.program     { m.program as u16 }
+        else if addr == map.program+1   {
             let (step_idx, _, _) = crate::programs::get_active_step_details(m.machine_type, m.program, m.time_remaining, cfg);
             if m.time_remaining > 0 { (step_idx + 1) as u16 } else { 0 }
         }
-        else if addr == 30 { crate::programs::get_program_price(m.machine_type, m.program, cfg) as u16 }
-        else if addr == 31 { m.coins as u16 }
-        else if addr == 32 { m.total_coins as u16 }
-        else if addr == 33 { m.total_coins as u16 }
-        else if addr == map.machine_id { m.id as u16 }
-        else if addr == map.error_code { m.error_code as u16 }
+        else if addr == map.program+2   { crate::programs::get_program_price(m.machine_type, m.program, cfg) as u16 }
+        else if addr == map.coins       { m.coins as u16 }
+        else if addr == map.total_coins { m.total_coins as u16 }
+        else if addr == map.total_coins+1 { m.total_coins as u16 }
+        else if addr == map.machine_id  { m.id as u16 }
+        else if addr == map.error_code  { m.error_code as u16 }
         else { 0 }
     } else {
         // Washer standard mapping
@@ -134,6 +133,14 @@ fn get_register_value(addr: u16, m: &Machine, map: &RegisterMapping, cfg: &Simul
     }
 }
 
+fn emit_modbus_log(handle: &AppHandle, msg: String) {
+    let _ = handle.emit("log-event", &LogEntry {
+        timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+        level: "MODBUS".into(),
+        message: msg,
+    });
+}
+
 fn apply_write_to_machine(
     addr: u16,
     value: u16,
@@ -152,11 +159,7 @@ fn apply_write_to_machine(
         m.error_code = 0;
         m.temperature = 25.0;
         m.door_status = 2;
-        let _ = handle.emit("log-event", &LogEntry {
-            timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
-            level: "MODBUS".into(),
-            message: format!("Modbus: Error reset on machine #{}", m.id),
-        });
+        emit_modbus_log(handle, format!("Modbus: Error reset on machine #{}", m.id));
     } else if clean_addr == map.write_start {
         if value == 1 && (m.state == MachineState::Idle || m.state == MachineState::Completed) {
             let price = get_program_price(m.machine_type, m.program, cfg);
@@ -172,11 +175,32 @@ fn apply_write_to_machine(
                     m.state = MachineState::Drying;
                     m.temperature = 45.0;
                 }
+                emit_modbus_log(handle, format!(
+                    "Modbus: Machine #{} STARTED (prog={}, price={}, remaining_coins={})",
+                    m.id, m.program, price, m.coins
+                ));
+            } else {
+                // Log the reason for failure
+                let reason = if m.coins < price {
+                    format!("insufficient coins ({} < {} required)", m.coins, price)
+                } else {
+                    "door is open".to_string()
+                };
+                emit_modbus_log(handle, format!(
+                    "Modbus: Machine #{} START REJECTED — {}",
+                    m.id, reason
+                ));
             }
+        } else if value == 1 {
+            emit_modbus_log(handle, format!(
+                "Modbus: Machine #{} START REJECTED — state is {:?} (must be Idle or Completed)",
+                m.id, m.state
+            ));
         }
     } else if clean_addr == map.write_advance {
         if value == 1 && m.time_remaining > 60 {
             m.time_remaining = m.time_remaining.saturating_sub(60);
+            emit_modbus_log(handle, format!("Modbus: Machine #{} advance -60s (remain={}s)", m.id, m.time_remaining));
         }
     } else if clean_addr == map.write_stop && value == 1 {
         m.state = MachineState::Idle;
@@ -185,10 +209,18 @@ fn apply_write_to_machine(
         m.water_level = 0;
         m.temperature = 25.0;
         m.time_remaining = 0;
+        emit_modbus_log(handle, format!("Modbus: Machine #{} STOPPED via write command", m.id));
     } else if clean_addr == map.write_coins {
-        m.coins = value as u32;
+        m.coins = m.coins.saturating_add(value as u32);
+        emit_modbus_log(handle, format!("Modbus: Machine #{} coins +{} (total={})", m.id, value, m.coins));
     } else if clean_addr == map.write_program && (1..=30).contains(&value) {
         m.program = value as u8;
+        emit_modbus_log(handle, format!("Modbus: Machine #{} program set to {}", m.id, value));
+    } else {
+        emit_modbus_log(handle, format!(
+            "Modbus: Machine #{} — unhandled write reg {} = {} (no matching mapping)",
+            m.id, clean_addr, value
+        ));
     }
 }
 
@@ -413,6 +445,11 @@ pub fn modbus_server_thread(
                                 hex: tx_hex,
                                 timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
                             });
+
+                            // Notify frontend after write commands so UI reflects changes
+                            if matches!(decoded.function_code, 0x06 | 0x10) {
+                                let _ = handle.emit("machines-updated", ());
+                            }
                         }
                     }
                 }
