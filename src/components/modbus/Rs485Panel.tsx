@@ -32,11 +32,11 @@ interface Rs485PanelProps {
 }
 
 export function Rs485Panel({ onToast, onRefresh }: Rs485PanelProps) {
-  const [ports, setPorts]     = useState<string[]>([])
-  const [port, setPort]       = useState("")
-  const [baud, setBaud]       = useState(9600)
-  const [status, setStatus]   = useState<ModbusStatus | null>(null)
-  const [fault, setFault]     = useState<FaultConfig>({ timeout: false, crc_error: false, exception_code: 0 })
+  const [ports, setPorts] = useState<string[]>([])
+  const [port, setPort] = useState("")
+  const [baud, setBaud] = useState(9600)
+  const [status, setStatus] = useState<ModbusStatus | null>(null)
+  const [fault, setFault] = useState<FaultConfig>({ timeout: false, crc_error: false, exception_code: 0 })
   const [loading, setLoading] = useState(false)
   const initializedRef = useRef(false)
 

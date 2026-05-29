@@ -322,15 +322,53 @@ pub fn modbus_server_thread(
 
     let mut buf   = [0u8; 256];
     let mut frame: Vec<u8> = Vec::with_capacity(256);
+    let mut last_rx = std::time::Instant::now();
 
     while !stop_flag.load(Ordering::SeqCst) {
+        // Inter-frame silence detection: if we have accumulated bytes
+        // but no new data for >5ms, the frame is complete (or garbage).
+        // Modbus RTU standard: 3.5 char silence = frame boundary.
+        if !frame.is_empty() && last_rx.elapsed() > Duration::from_millis(5) {
+            let expected_len = if frame.len() >= 2 {
+                match frame[1] {
+                    0x03 | 0x04 => Some(8usize),
+                    0x06        => Some(8),
+                    0x10 if frame.len() >= 7 => {
+                        let byte_count = frame[6] as usize;
+                        Some(9 + byte_count)
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            };
+
+            // If we can't determine expected length, or the frame
+            // doesn't match the expected size, discard it.
+            let should_discard = match expected_len {
+                None => true,
+                Some(len) => frame.len() != len,
+            };
+
+            if should_discard {
+                let garbage_hex = frame.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
+                let _ = handle.emit("log-event", &LogEntry {
+                    timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+                    level: "WARN".into(),
+                    message: format!("Modbus: Discarded {} stale bytes: {}", frame.len(), garbage_hex),
+                });
+                frame.clear();
+            }
+        }
+
         match port.read(&mut buf) {
             Ok(n) if n > 0 => {
                 frame.extend_from_slice(&buf[..n]);
+                last_rx = std::time::Instant::now();
 
                 let expected_len = if frame.len() >= 2 {
                     match frame[1] {
-                        0x03 | 0x04 => Some(8),
+                        0x03 | 0x04 => Some(8usize),
                         0x06        => Some(8),
                         0x10 if frame.len() >= 7 => {
                             let byte_count = frame[6] as usize;
@@ -356,6 +394,7 @@ pub fn modbus_server_thread(
                             level: "ERROR".into(),
                             message: "Modbus: CRC error on received frame".into(),
                         });
+                        frame.clear(); // Clear remaining bytes to prevent cascading errors
                         continue;
                     }
 
@@ -383,6 +422,7 @@ pub fn modbus_server_thread(
                             resp.push((crc & 0xFF) as u8);
                             resp.push((crc >> 8) as u8);
                             let _ = port.write_all(&resp);
+                            let _ = port.flush();
                             continue;
                         }
 
@@ -439,6 +479,7 @@ pub fn modbus_server_thread(
 
                             let tx_hex = resp.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
                             let _ = port.write_all(&resp);
+                            let _ = port.flush(); // Critical for Windows: force data out immediately
                             *safe_lock(&tx_counter) += 1;
                             let _ = handle.emit("traffic-event", &TrafficLog {
                                 direction: "TX".into(),

@@ -29,25 +29,25 @@ interface TxLog {
 }
 
 export function VirtualPlcView({ onToast }: VirtualPlcViewProps) {
-  const [ports, setPorts]             = useState<string[]>([])
+  const [ports, setPorts] = useState<string[]>([])
   const [selectedPort, setSelectedPort] = useState("")
-  const [baud, setBaud]               = useState(9600)
-  const [connected, setConnected]     = useState(false)
-  const [loading, setLoading]         = useState(false)
+  const [baud, setBaud] = useState(9600)
+  const [connected, setConnected] = useState(false)
+  const [loading, setLoading] = useState(false)
 
   // Config-driven presets
-  const [config, setConfig]           = useState<SimulatorConfig | null>(null)
-  const [washerProg, setWasherProg]   = useState(1)
-  const [dryerProg, setDryerProg]     = useState(1)
+  const [config, setConfig] = useState<SimulatorConfig | null>(null)
+  const [washerProg, setWasherProg] = useState(1)
+  const [dryerProg, setDryerProg] = useState(1)
 
   // Custom request states
-  const [unitId, setUnitId]           = useState(1)
-  const [fc, setFc]                   = useState(6)
-  const [address, setAddress]         = useState(1)
-  const [valueOrQty, setValueOrQty]   = useState(1)
+  const [unitId, setUnitId] = useState(1)
+  const [fc, setFc] = useState(6)
+  const [address, setAddress] = useState(1)
+  const [valueOrQty, setValueOrQty] = useState(1)
 
   // Logs
-  const [txLogs, setTxLogs]           = useState<TxLog[]>([])
+  const [txLogs, setTxLogs] = useState<TxLog[]>([])
 
   const refreshPorts = useCallback(async () => {
     try {
@@ -168,7 +168,7 @@ export function VirtualPlcView({ onToast }: VirtualPlcViewProps) {
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-muted/5">
-        
+
         {/* Connection card */}
         <div className="rounded-xl border bg-card p-4 shadow-sm space-y-4">
           <div className="flex items-center justify-between">
@@ -176,7 +176,7 @@ export function VirtualPlcView({ onToast }: VirtualPlcViewProps) {
               <div className={cn("h-2.5 w-2.5 rounded-full", connected ? "bg-emerald-500 animate-pulse" : "bg-muted-foreground/40")} />
               <span className="font-bold text-sm">COM Port Connection</span>
             </div>
-            
+
             <Button
               size="sm"
               variant="outline"
@@ -188,7 +188,7 @@ export function VirtualPlcView({ onToast }: VirtualPlcViewProps) {
           </div>
 
           <div className="flex flex-wrap gap-4 items-center">
-            
+
             {/* Port dropdown */}
             <div className="flex items-center gap-2 text-xs">
               <span className="text-muted-foreground">Port:</span>
@@ -250,10 +250,10 @@ export function VirtualPlcView({ onToast }: VirtualPlcViewProps) {
 
         {/* Workspace Panels Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
-          
+
           {/* Left panel: Presets & Manual Transaction */}
           <div className="space-y-4">
-            
+
             {/* Quick Action Presets */}
             <div className="rounded-xl border bg-card p-4 shadow-sm space-y-3">
               <div className="flex items-center gap-1.5 text-primary">
@@ -265,11 +265,11 @@ export function VirtualPlcView({ onToast }: VirtualPlcViewProps) {
               </p>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                
+
                 {/* Washer Commands Card */}
                 <div className="rounded-lg border bg-muted/10 p-3 space-y-3">
                   <span className="font-bold text-xs text-blue-500 block">Washer Presets (Slave 1)</span>
-                  
+
                   {/* Program selector */}
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] text-muted-foreground font-bold">Program:</span>
@@ -354,7 +354,7 @@ export function VirtualPlcView({ onToast }: VirtualPlcViewProps) {
                 {/* Dryer Commands Card */}
                 <div className="rounded-lg border bg-muted/10 p-3 space-y-3">
                   <span className="font-bold text-xs text-orange-500 block">Dryer Presets (Slave 2)</span>
-                  
+
                   {/* Program selector */}
                   <div className="flex items-center gap-2">
                     <span className="text-[10px] text-muted-foreground font-bold">Program:</span>
@@ -447,7 +447,7 @@ export function VirtualPlcView({ onToast }: VirtualPlcViewProps) {
               </div>
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 items-center">
-                
+
                 {/* Unit ID */}
                 <div className="space-y-1">
                   <span className="text-[10px] text-muted-foreground uppercase font-bold block">Slave Unit ID</span>
