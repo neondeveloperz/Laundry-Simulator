@@ -288,84 +288,60 @@ fn decode_modbus_pdu(frame: &[u8]) -> Option<ModbusFrame> {
 // ============================================================
 
 pub fn modbus_server_thread(
-    port_name:  String,
-    baud:       u32,
-    stop_flag:  Arc<AtomicBool>,
-    machines:   Arc<Mutex<Vec<Machine>>>,
-    config:     Arc<Mutex<SimulatorConfig>>,
-    fault_cfg:  Arc<Mutex<FaultConfig>>,
-    rx_counter: Arc<Mutex<u64>>,
-    tx_counter: Arc<Mutex<u64>>,
-    handle:     AppHandle,
+    port_name:        String,
+    baud:             u32,
+    stop_flag:        Arc<AtomicBool>,
+    machines:         Arc<Mutex<Vec<Machine>>>,
+    config:           Arc<Mutex<SimulatorConfig>>,
+    fault_cfg:        Arc<Mutex<FaultConfig>>,
+    rx_counter:       Arc<Mutex<u64>>,
+    tx_counter:       Arc<Mutex<u64>>,
+    handle:           AppHandle,
+    modbus_connected: Arc<AtomicBool>,
 ) {
-    let port = serialport::new(&port_name, baud)
-        .timeout(Duration::from_millis(50))
-        .open();
+    'reconnect: loop {
+        if stop_flag.load(Ordering::SeqCst) { break; }
 
-    let mut port = match port {
-        Ok(p) => p,
-        Err(e) => {
-            let _ = handle.emit("log-event", &LogEntry {
-                timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
-                level: "ERROR".into(),
-                message: format!("Modbus: Failed to open {}: {}", port_name, e),
-            });
-            return;
-        }
-    };
+        let port_result = serialport::new(&port_name, baud)
+            .timeout(Duration::from_millis(50))
+            .open();
 
-    let _ = handle.emit("log-event", &LogEntry {
-        timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
-        level: "MODBUS".into(),
-        message: format!("Modbus: Opened {} @ {} baud (auto slave ID per machine)", port_name, baud),
-    });
-
-    let mut buf   = [0u8; 256];
-    let mut frame: Vec<u8> = Vec::with_capacity(256);
-    let mut last_rx = std::time::Instant::now();
-
-    while !stop_flag.load(Ordering::SeqCst) {
-        // Inter-frame silence detection: if we have accumulated bytes
-        // but no new data for >5ms, the frame is complete (or garbage).
-        // Modbus RTU standard: 3.5 char silence = frame boundary.
-        if !frame.is_empty() && last_rx.elapsed() > Duration::from_millis(5) {
-            let expected_len = if frame.len() >= 2 {
-                match frame[1] {
-                    0x03 | 0x04 => Some(8usize),
-                    0x06        => Some(8),
-                    0x10 if frame.len() >= 7 => {
-                        let byte_count = frame[6] as usize;
-                        Some(9 + byte_count)
-                    }
-                    _ => None,
-                }
-            } else {
-                None
-            };
-
-            // If we can't determine expected length, or the frame
-            // doesn't match the expected size, discard it.
-            let should_discard = match expected_len {
-                None => true,
-                Some(len) => frame.len() != len,
-            };
-
-            if should_discard {
-                let garbage_hex = frame.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
+        let mut port = match port_result {
+            Ok(p) => {
+                modbus_connected.store(true, Ordering::SeqCst);
                 let _ = handle.emit("log-event", &LogEntry {
                     timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
-                    level: "WARN".into(),
-                    message: format!("Modbus: Discarded {} stale bytes: {}", frame.len(), garbage_hex),
+                    level: "MODBUS".into(),
+                    message: format!("Modbus: Opened {} @ {} baud (auto slave ID per machine)", port_name, baud),
                 });
-                frame.clear();
+                p
             }
-        }
+            Err(e) => {
+                modbus_connected.store(false, Ordering::SeqCst);
+                let _ = handle.emit("log-event", &LogEntry {
+                    timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+                    level: "ERROR".into(),
+                    message: format!("Modbus: Failed to open {}: {} — retrying in 3s", port_name, e),
+                });
+                for _ in 0..30 {
+                    if stop_flag.load(Ordering::SeqCst) { break 'reconnect; }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                continue 'reconnect;
+            }
+        };
 
-        match port.read(&mut buf) {
-            Ok(n) if n > 0 => {
-                frame.extend_from_slice(&buf[..n]);
-                last_rx = std::time::Instant::now();
+        let mut buf     = [0u8; 256];
+        let mut frame: Vec<u8> = Vec::with_capacity(256);
+        let mut last_rx = std::time::Instant::now();
 
+        loop {
+            if stop_flag.load(Ordering::SeqCst) { break 'reconnect; }
+
+            // Inter-frame silence detection: if we have accumulated bytes
+            // but no new data for >5ms, the frame is complete (or garbage).
+            // Modbus RTU standard: 3.5 char silence = frame boundary.
+            if !frame.is_empty() && last_rx.elapsed() > Duration::from_millis(5) {
                 let expected_len = if frame.len() >= 2 {
                     match frame[1] {
                         0x03 | 0x04 => Some(8usize),
@@ -380,126 +356,179 @@ pub fn modbus_server_thread(
                     None
                 };
 
-                if let Some(len) = expected_len {
-                    if frame.len() < len { continue; }
+                let should_discard = match expected_len {
+                    None => true,
+                    Some(len) => frame.len() != len,
+                };
 
-                    let raw = frame.drain(..len).collect::<Vec<_>>();
-
-                    // CRC validation
-                    let payload_crc = crc16(&raw[..raw.len()-2]);
-                    let frame_crc   = u16::from_le_bytes([raw[raw.len()-2], raw[raw.len()-1]]);
-                    if payload_crc != frame_crc {
-                        let _ = handle.emit("log-event", &LogEntry {
-                            timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
-                            level: "ERROR".into(),
-                            message: "Modbus: CRC error on received frame".into(),
-                        });
-                        frame.clear(); // Clear remaining bytes to prevent cascading errors
-                        continue;
-                    }
-
-                    *safe_lock(&rx_counter) += 1;
-                    let rx_hex = raw.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
-                    let _ = handle.emit("traffic-event", &TrafficLog {
-                        direction: "RX".into(),
-                        hex: rx_hex,
+                if should_discard {
+                    let garbage_hex = frame.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
+                    let _ = handle.emit("log-event", &LogEntry {
                         timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+                        level: "WARN".into(),
+                        message: format!("Modbus: Discarded {} stale bytes: {}", frame.len(), garbage_hex),
                     });
+                    frame.clear();
+                }
+            }
 
-                    if let Some(decoded) = decode_modbus_pdu(&raw) {
-                        let _ = handle.emit("modbus-frame", &decoded);
+            match port.read(&mut buf) {
+                Ok(n) if n > 0 => {
+                    frame.extend_from_slice(&buf[..n]);
+                    last_rx = std::time::Instant::now();
 
-                        let fault = safe_lock(&fault_cfg).clone();
+                    let expected_len = if frame.len() >= 2 {
+                        match frame[1] {
+                            0x03 | 0x04 => Some(8usize),
+                            0x06        => Some(8),
+                            0x10 if frame.len() >= 7 => {
+                                let byte_count = frame[6] as usize;
+                                Some(9 + byte_count)
+                            }
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
 
-                        if fault.timeout {
-                            std::thread::sleep(Duration::from_secs(2));
+                    if let Some(len) = expected_len {
+                        if frame.len() < len { continue; }
+
+                        let raw = frame.drain(..len).collect::<Vec<_>>();
+
+                        // CRC validation
+                        let payload_crc = crc16(&raw[..raw.len()-2]);
+                        let frame_crc   = u16::from_le_bytes([raw[raw.len()-2], raw[raw.len()-1]]);
+                        if payload_crc != frame_crc {
+                            let _ = handle.emit("log-event", &LogEntry {
+                                timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+                                level: "ERROR".into(),
+                                message: "Modbus: CRC error on received frame".into(),
+                            });
+                            frame.clear();
                             continue;
                         }
-                        if fault.exception_code > 0 {
-                            let exc = vec![decoded.unit_id, 0x80 | decoded.function_code, fault.exception_code];
-                            let crc = crc16(&exc);
-                            let mut resp = exc;
-                            resp.push((crc & 0xFF) as u8);
-                            resp.push((crc >> 8) as u8);
-                            let _ = port.write_all(&resp);
-                            let _ = port.flush();
-                            continue;
-                        }
 
-                        let response: Option<Vec<u8>> = {
-                            let mut m_lock  = safe_lock(&machines);
-                            let cfg_lock    = safe_lock(&config);
-                            let machine = m_lock.iter_mut().find(|m| m.id == decoded.unit_id);
+                        *safe_lock(&rx_counter) += 1;
+                        let rx_hex = raw.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
+                        let _ = handle.emit("traffic-event", &TrafficLog {
+                            direction: "RX".into(),
+                            hex: rx_hex,
+                            timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+                        });
 
-                            if let Some(m) = machine {
-                                let map = match m.machine_type {
-                                    MachineType::Washer => &cfg_lock.washer_mapping,
-                                    MachineType::Dryer  => &cfg_lock.dryer_mapping,
-                                };
-                                match decoded.function_code {
-                                    0x03 | 0x04 => {
-                                        fc03_response_dynamic(decoded.unit_id, decoded.address, decoded.quantity, m, map, &cfg_lock)
-                                    }
-                                    0x06 => {
-                                        apply_write_to_machine(decoded.address, decoded.quantity, m, &cfg_lock, map, &handle);
-                                        Some(write_echo_response(&raw))
-                                    }
-                                    0x10 => {
-                                        let count = decoded.quantity;
-                                        // Validate: byte_count field must match quantity * 2
-                                        let byte_count = raw[6] as u16;
-                                        if byte_count != count * 2 {
-                                            None
-                                        } else {
-                                            for i in 0..count {
-                                                if 9 + (i as usize)*2 + 1 < raw.len() {
-                                                    let val = u16::from_be_bytes([raw[9 + i as usize * 2], raw[9 + i as usize * 2 + 1]]);
-                                                    apply_write_to_machine(decoded.address + i, val, m, &cfg_lock, map, &handle);
-                                                }
-                                            }
-                                            // Build proper echo: unit_id, fc, addr(2), qty(2) + recalculated CRC
-                                            let echo_payload = raw[..6].to_vec();
-                                            let echo_crc = crc16(&echo_payload);
-                                            let mut echo_frame = echo_payload;
-                                            echo_frame.push((echo_crc & 0xFF) as u8);
-                                            echo_frame.push((echo_crc >> 8) as u8);
-                                            Some(echo_frame)
-                                        }
-                                    }
-                                    _ => None,
-                                }
-                            } else { None }
-                        };
+                        if let Some(decoded) = decode_modbus_pdu(&raw) {
+                            let _ = handle.emit("modbus-frame", &decoded);
 
-                        if let Some(mut resp) = response {
-                            if fault.crc_error && resp.len() >= 2 {
-                                let n = resp.len();
-                                resp[n-1] ^= 0xFF; // corrupt last CRC byte
+                            let fault = safe_lock(&fault_cfg).clone();
+
+                            if fault.timeout {
+                                std::thread::sleep(Duration::from_secs(2));
+                                continue;
+                            }
+                            if fault.exception_code > 0 {
+                                let exc = vec![decoded.unit_id, 0x80 | decoded.function_code, fault.exception_code];
+                                let crc = crc16(&exc);
+                                let mut resp = exc;
+                                resp.push((crc & 0xFF) as u8);
+                                resp.push((crc >> 8) as u8);
+                                let _ = port.write_all(&resp);
+                                let _ = port.flush();
+                                continue;
                             }
 
-                            let tx_hex = resp.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
-                            let _ = port.write_all(&resp);
-                            let _ = port.flush(); // Critical for Windows: force data out immediately
-                            *safe_lock(&tx_counter) += 1;
-                            let _ = handle.emit("traffic-event", &TrafficLog {
-                                direction: "TX".into(),
-                                hex: tx_hex,
-                                timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
-                            });
+                            let response: Option<Vec<u8>> = {
+                                let mut m_lock  = safe_lock(&machines);
+                                let cfg_lock    = safe_lock(&config);
+                                let machine = m_lock.iter_mut().find(|m| m.id == decoded.unit_id);
 
-                            // Notify frontend after write commands so UI reflects changes
-                            if matches!(decoded.function_code, 0x06 | 0x10) {
-                                let _ = handle.emit("machines-updated", ());
+                                if let Some(m) = machine {
+                                    let map = match m.machine_type {
+                                        MachineType::Washer => &cfg_lock.washer_mapping,
+                                        MachineType::Dryer  => &cfg_lock.dryer_mapping,
+                                    };
+                                    match decoded.function_code {
+                                        0x03 | 0x04 => {
+                                            fc03_response_dynamic(decoded.unit_id, decoded.address, decoded.quantity, m, map, &cfg_lock)
+                                        }
+                                        0x06 => {
+                                            apply_write_to_machine(decoded.address, decoded.quantity, m, &cfg_lock, map, &handle);
+                                            Some(write_echo_response(&raw))
+                                        }
+                                        0x10 => {
+                                            let count = decoded.quantity;
+                                            let byte_count = raw[6] as u16;
+                                            if byte_count != count * 2 {
+                                                None
+                                            } else {
+                                                for i in 0..count {
+                                                    if 9 + (i as usize)*2 + 1 < raw.len() {
+                                                        let val = u16::from_be_bytes([raw[9 + i as usize * 2], raw[9 + i as usize * 2 + 1]]);
+                                                        apply_write_to_machine(decoded.address + i, val, m, &cfg_lock, map, &handle);
+                                                    }
+                                                }
+                                                let echo_payload = raw[..6].to_vec();
+                                                let echo_crc = crc16(&echo_payload);
+                                                let mut echo_frame = echo_payload;
+                                                echo_frame.push((echo_crc & 0xFF) as u8);
+                                                echo_frame.push((echo_crc >> 8) as u8);
+                                                Some(echo_frame)
+                                            }
+                                        }
+                                        _ => None,
+                                    }
+                                } else { None }
+                            };
+
+                            if let Some(mut resp) = response {
+                                if fault.crc_error && resp.len() >= 2 {
+                                    let n = resp.len();
+                                    resp[n-1] ^= 0xFF;
+                                }
+
+                                let tx_hex = resp.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
+                                let _ = port.write_all(&resp);
+                                let _ = port.flush();
+                                *safe_lock(&tx_counter) += 1;
+                                let _ = handle.emit("traffic-event", &TrafficLog {
+                                    direction: "TX".into(),
+                                    hex: tx_hex,
+                                    timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+                                });
+
+                                if matches!(decoded.function_code, 0x06 | 0x10) {
+                                    let _ = handle.emit("machines-updated", ());
+                                }
                             }
                         }
                     }
                 }
+                Ok(_) => {}
+                Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut
+                    || e.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(e) => {
+                    // Port disconnected or fatal I/O error — attempt auto-reconnect
+                    modbus_connected.store(false, Ordering::SeqCst);
+                    frame.clear();
+                    let _ = handle.emit("log-event", &LogEntry {
+                        timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+                        level: "WARN".into(),
+                        message: format!("Modbus: Port {} disconnected ({}) — reconnecting in 3s…", port_name, e),
+                    });
+                    let mut cancelled = false;
+                    for _ in 0..30 {
+                        if stop_flag.load(Ordering::SeqCst) { cancelled = true; break; }
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                    if cancelled { break 'reconnect; }
+                    continue 'reconnect;
+                }
             }
-            _ => {}
+            std::thread::sleep(Duration::from_millis(1));
         }
-        std::thread::sleep(Duration::from_millis(1));
     }
 
+    modbus_connected.store(false, Ordering::SeqCst);
     let _ = handle.emit("log-event", &LogEntry {
         timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
         level: "MODBUS".into(),
@@ -561,14 +590,15 @@ pub fn start_modbus_server(port: String, baud: u32, state: State<AppState>, app:
     }
     state.save_config();
 
-    let machines   = Arc::clone(&state.machines);
-    let config     = Arc::clone(&state.config);
-    let fault_cfg  = Arc::clone(&state.fault_config);
-    let rx_counter = Arc::clone(&state.modbus_rx);
-    let tx_counter = Arc::clone(&state.modbus_tx);
+    let machines          = Arc::clone(&state.machines);
+    let config            = Arc::clone(&state.config);
+    let fault_cfg         = Arc::clone(&state.fault_config);
+    let rx_counter        = Arc::clone(&state.modbus_rx);
+    let tx_counter        = Arc::clone(&state.modbus_tx);
+    let modbus_connected  = Arc::clone(&state.modbus_connected);
 
     std::thread::spawn(move || {
-        modbus_server_thread(port, baud, stop_flag, machines, config, fault_cfg, rx_counter, tx_counter, app);
+        modbus_server_thread(port, baud, stop_flag, machines, config, fault_cfg, rx_counter, tx_counter, app, modbus_connected);
     });
 
     state.emit_log("MODBUS", "Modbus: Server started (auto slave ID per machine)");

@@ -96,18 +96,20 @@ pub fn run() {
                     *safe_lock(&state.modbus_tx)   = 0;
                     state.modbus_connected.store(true, Ordering::SeqCst);
 
-                    let machines   = Arc::clone(&state.machines);
-                    let config     = Arc::clone(&state.config);
-                    let fault_cfg  = Arc::clone(&state.fault_config);
-                    let rx_counter = Arc::clone(&state.modbus_rx);
-                    let tx_counter = Arc::clone(&state.modbus_tx);
-                    let auto_handle = handle.clone();
+                    let machines         = Arc::clone(&state.machines);
+                    let config           = Arc::clone(&state.config);
+                    let fault_cfg        = Arc::clone(&state.fault_config);
+                    let rx_counter       = Arc::clone(&state.modbus_rx);
+                    let tx_counter       = Arc::clone(&state.modbus_tx);
+                    let modbus_connected = Arc::clone(&state.modbus_connected);
+                    let auto_handle      = handle.clone();
 
                     std::thread::spawn(move || {
                         modbus::modbus_server_thread(
                             port, baud, stop_flag,
                             machines, config, fault_cfg,
                             rx_counter, tx_counter, auto_handle,
+                            modbus_connected,
                         );
                     });
                     state.emit_log("MODBUS", "Modbus: Auto-started from last session config");

@@ -28,7 +28,7 @@ pub struct AppState {
     pub fault_config:      Arc<Mutex<FaultConfig>>,
     // Modbus server
     pub modbus_stop:       Mutex<Option<Arc<AtomicBool>>>,
-    pub modbus_connected:  AtomicBool,
+    pub modbus_connected:  Arc<AtomicBool>,
     pub modbus_port:       Mutex<String>,
     pub modbus_baud:       Mutex<u32>,
     pub modbus_rx:         Arc<Mutex<u64>>,
@@ -49,7 +49,7 @@ impl AppState {
             app_handle:        Mutex::new(None),
             fault_config:      Arc::new(Mutex::new(FaultConfig::default())),
             modbus_stop:       Mutex::new(None),
-            modbus_connected:  AtomicBool::new(false),
+            modbus_connected:  Arc::new(AtomicBool::new(false)),
             modbus_port:       Mutex::new(String::new()),
             modbus_baud:       Mutex::new(9600),
             modbus_rx:         Arc::new(Mutex::new(0)),
