@@ -142,7 +142,7 @@ export function AppSidebar({
   modbusConnected = false,
   ...props
 }: AppSidebarProps) {
-  const [version, setVersion] = React.useState<string>("2.0.2")
+  const [version, setVersion] = React.useState<string>("2.1.0")
 
   React.useEffect(() => {
     getAppInfo()
