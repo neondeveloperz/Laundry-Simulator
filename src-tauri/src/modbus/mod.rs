@@ -12,8 +12,8 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::state::{AppState, safe_lock};
 use crate::types::{
-    FaultConfig, LogEntry, Machine, MachineType, ModbusFrame, RegisterMapping, SimulatorConfig,
-    TrafficLog,
+    FaultConfig, LogEntry, Machine, MachineType, ModbusFrame, PortMachineFilter,
+    RegisterMapping, SimulatorConfig, TrafficLog,
 };
 
 // ============================================================
@@ -71,7 +71,7 @@ fn get_register_value(addr: u16, m: &Machine, map: &RegisterMapping, cfg: &Simul
         else if addr == map.coins       { m.coins as u16 }
         else if addr == map.total_coins { m.total_coins as u16 }
         else if addr == map.total_coins+1 { m.total_coins as u16 }
-        else if addr == map.machine_id  { m.id as u16 }
+        else if addr == map.machine_id  { m.unit_id as u16 }
         else if addr == map.error_code  { m.error_code as u16 }
         else { 0 }
     } else {
@@ -127,7 +127,7 @@ fn get_register_value(addr: u16, m: &Machine, map: &RegisterMapping, cfg: &Simul
         else if addr == map.total_coins + 1 { // 39: Current coins in cash box
             m.total_coins as u16
         }
-        else if addr == map.machine_id  { m.id as u16 }
+        else if addr == map.machine_id  { m.unit_id as u16 }
         else if addr == map.error_code  { m.error_code as u16 }
         else                            { 0 }
     }
@@ -257,7 +257,7 @@ fn write_echo_response(frame: &[u8]) -> Vec<u8> {
     frame.to_vec()
 }
 
-fn decode_modbus_pdu(frame: &[u8]) -> Option<ModbusFrame> {
+fn decode_modbus_pdu(frame: &[u8], port_name: Option<&str>) -> Option<ModbusFrame> {
     if frame.len() < 6 {
         return None;
     }
@@ -273,6 +273,7 @@ fn decode_modbus_pdu(frame: &[u8]) -> Option<ModbusFrame> {
         _    => format!("FC{:02X}", fc),
     };
     Some(ModbusFrame {
+        port: port_name.map(|s| s.to_string()),
         unit_id,
         function_code: fc,
         address: addr,
@@ -290,6 +291,7 @@ fn decode_modbus_pdu(frame: &[u8]) -> Option<ModbusFrame> {
 pub fn modbus_server_thread(
     port_name:        String,
     baud:             u32,
+    machine_filter:   PortMachineFilter,
     stop_flag:        Arc<AtomicBool>,
     machines:         Arc<Mutex<Vec<Machine>>>,
     config:           Arc<Mutex<SimulatorConfig>>,
@@ -309,10 +311,16 @@ pub fn modbus_server_thread(
         let mut port = match port_result {
             Ok(p) => {
                 modbus_connected.store(true, Ordering::SeqCst);
+                let filter_desc = match &machine_filter {
+                    PortMachineFilter::All => "All machines".to_string(),
+                    PortMachineFilter::WashersOnly => "Washers only".to_string(),
+                    PortMachineFilter::DryersOnly => "Dryers only".to_string(),
+                    PortMachineFilter::Custom(ids) => format!("Machines: {:?}", ids),
+                };
                 let _ = handle.emit("log-event", &LogEntry {
                     timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
                     level: "MODBUS".into(),
-                    message: format!("Modbus: Opened {} @ {} baud (auto slave ID per machine)", port_name, baud),
+                    message: format!("Modbus: Opened {} @ {} baud ({})", port_name, baud, filter_desc),
                 });
                 p
             }
@@ -366,7 +374,7 @@ pub fn modbus_server_thread(
                     let _ = handle.emit("log-event", &LogEntry {
                         timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
                         level: "WARN".into(),
-                        message: format!("Modbus: Discarded {} stale bytes: {}", frame.len(), garbage_hex),
+                        message: format!("Modbus [{}]: Discarded {} stale bytes: {}", port_name, frame.len(), garbage_hex),
                     });
                     frame.clear();
                 }
@@ -403,7 +411,7 @@ pub fn modbus_server_thread(
                             let _ = handle.emit("log-event", &LogEntry {
                                 timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
                                 level: "ERROR".into(),
-                                message: "Modbus: CRC error on received frame".into(),
+                                message: format!("Modbus [{}]: CRC error on received frame", port_name),
                             });
                             frame.clear();
                             continue;
@@ -415,9 +423,32 @@ pub fn modbus_server_thread(
                             direction: "RX".into(),
                             hex: rx_hex,
                             timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+                            port: Some(port_name.clone()),
                         });
 
-                        if let Some(decoded) = decode_modbus_pdu(&raw) {
+                        if let Some(decoded) = decode_modbus_pdu(&raw, Some(&port_name)) {
+                            // Dedicated machine filter per port check
+                            let is_machine_allowed = match &machine_filter {
+                                PortMachineFilter::All => {
+                                    let m_lock = safe_lock(&machines);
+                                    m_lock.iter().any(|m| m.unit_id == decoded.unit_id && (m.port.is_none() || m.port.as_deref() == Some(&port_name)))
+                                }
+                                PortMachineFilter::WashersOnly => {
+                                    let m_lock = safe_lock(&machines);
+                                    m_lock.iter().any(|m| m.unit_id == decoded.unit_id && m.machine_type == MachineType::Washer && (m.port.is_none() || m.port.as_deref() == Some(&port_name)))
+                                }
+                                PortMachineFilter::DryersOnly => {
+                                    let m_lock = safe_lock(&machines);
+                                    m_lock.iter().any(|m| m.unit_id == decoded.unit_id && m.machine_type == MachineType::Dryer && (m.port.is_none() || m.port.as_deref() == Some(&port_name)))
+                                }
+                                PortMachineFilter::Custom(ids) => ids.contains(&decoded.unit_id),
+                            };
+
+                            if !is_machine_allowed {
+                                // Frame addressed to a slave not on this port bus — ignore silently per Modbus RTU spec
+                                continue;
+                            }
+
                             let _ = handle.emit("modbus-frame", &decoded);
 
                             let fault = safe_lock(&fault_cfg).clone();
@@ -440,7 +471,9 @@ pub fn modbus_server_thread(
                             let response: Option<Vec<u8>> = {
                                 let mut m_lock  = safe_lock(&machines);
                                 let cfg_lock    = safe_lock(&config);
-                                let machine = m_lock.iter_mut().find(|m| m.id == decoded.unit_id);
+                                let machine = m_lock.iter_mut().find(|m| {
+                                    m.unit_id == decoded.unit_id && (m.port.is_none() || m.port.as_deref() == Some(&port_name))
+                                });
 
                                 if let Some(m) = machine {
                                     let map = match m.machine_type {
@@ -494,6 +527,7 @@ pub fn modbus_server_thread(
                                     direction: "TX".into(),
                                     hex: tx_hex,
                                     timestamp: chrono::Local::now().format("%H:%M:%S%.3f").to_string(),
+                                    port: Some(port_name.clone()),
                                 });
 
                                 if matches!(decoded.function_code, 0x06 | 0x10) {
@@ -537,6 +571,69 @@ pub fn modbus_server_thread(
 }
 
 // ============================================================
+// HELPER: START PORT SERVER
+// ============================================================
+
+pub fn start_port_server_internal(
+    port: String,
+    baud: u32,
+    machine_filter: PortMachineFilter,
+    state: &AppState,
+    handle: AppHandle,
+) -> Result<(), String> {
+    use std::sync::atomic::Ordering;
+
+    let mut workers = safe_lock(&state.modbus_workers);
+    if let Some(existing) = workers.get(&port) {
+        if existing.connected.load(Ordering::SeqCst) || !existing.stop_flag.load(Ordering::SeqCst) {
+            return Err(format!("Modbus server on port {} is already running", port));
+        }
+    }
+
+    let stop_flag = Arc::new(AtomicBool::new(false));
+    let connected = Arc::new(AtomicBool::new(false));
+    let rx_counter = Arc::new(Mutex::new(0));
+    let tx_counter = Arc::new(Mutex::new(0));
+
+    let worker = crate::state::ActivePortWorker {
+        port: port.clone(),
+        baud,
+        machine_filter: machine_filter.clone(),
+        stop_flag: Arc::clone(&stop_flag),
+        connected: Arc::clone(&connected),
+        rx_counter: Arc::clone(&rx_counter),
+        tx_counter: Arc::clone(&tx_counter),
+    };
+    workers.insert(port.clone(), worker);
+    drop(workers);
+
+    let machines          = Arc::clone(&state.machines);
+    let config            = Arc::clone(&state.config);
+    let fault_cfg         = Arc::clone(&state.fault_config);
+    let port_clone        = port.clone();
+    let conn_clone        = Arc::clone(&connected);
+
+    std::thread::spawn(move || {
+        modbus_server_thread(
+            port_clone,
+            baud,
+            machine_filter,
+            stop_flag,
+            machines,
+            config,
+            fault_cfg,
+            rx_counter,
+            tx_counter,
+            handle,
+            conn_clone,
+        );
+    });
+
+    state.emit_log("MODBUS", &format!("Modbus: Server started on {}", port));
+    Ok(())
+}
+
+// ============================================================
 // TAURI COMMANDS — Modbus Server
 // ============================================================
 
@@ -552,77 +649,270 @@ pub fn list_serial_ports() -> Vec<String> {
 #[tauri::command]
 pub fn get_modbus_status(state: State<AppState>) -> crate::types::ModbusStatus {
     use std::sync::atomic::Ordering;
+
+    let workers = safe_lock(&state.modbus_workers);
+    let cfg = safe_lock(&state.config);
+
+    let mut port_statuses: Vec<crate::types::PortStatus> = Vec::new();
+    let mut seen_ports = std::collections::HashSet::new();
+
+    let mut total_rx = 0u64;
+    let mut total_tx = 0u64;
+    let mut any_connected = false;
+    let mut active_port_names = Vec::new();
+
+    // 1. Configured ports from settings
+    for port_cfg in &cfg.ports {
+        seen_ports.insert(port_cfg.port.clone());
+        if let Some(worker) = workers.get(&port_cfg.port) {
+            let is_conn = worker.connected.load(Ordering::SeqCst);
+            let rx = *safe_lock(&worker.rx_counter);
+            let tx = *safe_lock(&worker.tx_counter);
+            total_rx += rx;
+            total_tx += tx;
+            if is_conn {
+                any_connected = true;
+                active_port_names.push(port_cfg.port.clone());
+            }
+            port_statuses.push(crate::types::PortStatus {
+                port: port_cfg.port.clone(),
+                baud: worker.baud,
+                connected: is_conn,
+                rx_count: rx,
+                tx_count: tx,
+                machine_filter: worker.machine_filter.clone(),
+                auto_connect: port_cfg.auto_connect,
+            });
+        } else {
+            port_statuses.push(crate::types::PortStatus {
+                port: port_cfg.port.clone(),
+                baud: port_cfg.baud,
+                connected: false,
+                rx_count: 0,
+                tx_count: 0,
+                machine_filter: port_cfg.machine_filter.clone(),
+                auto_connect: port_cfg.auto_connect,
+            });
+        }
+    }
+
+    // 2. Active workers not in config.ports
+    for (port_name, worker) in workers.iter() {
+        if !seen_ports.contains(port_name) {
+            let is_conn = worker.connected.load(Ordering::SeqCst);
+            let rx = *safe_lock(&worker.rx_counter);
+            let tx = *safe_lock(&worker.tx_counter);
+            total_rx += rx;
+            total_tx += tx;
+            if is_conn {
+                any_connected = true;
+                active_port_names.push(port_name.clone());
+            }
+            port_statuses.push(crate::types::PortStatus {
+                port: port_name.clone(),
+                baud: worker.baud,
+                connected: is_conn,
+                rx_count: rx,
+                tx_count: tx,
+                machine_filter: worker.machine_filter.clone(),
+                auto_connect: false,
+            });
+        }
+    }
+
+    let summary_port = if !active_port_names.is_empty() {
+        active_port_names.join(", ")
+    } else {
+        safe_lock(&state.modbus_port).clone()
+    };
+    let summary_baud = port_statuses.first().map(|p| p.baud).unwrap_or(9600);
+
+    state.modbus_connected.store(any_connected, Ordering::SeqCst);
+    *safe_lock(&state.modbus_rx) = total_rx;
+    *safe_lock(&state.modbus_tx) = total_tx;
+
     crate::types::ModbusStatus {
-        connected: state.modbus_connected.load(Ordering::SeqCst),
-        port:      safe_lock(&state.modbus_port).clone(),
-        baud:      *safe_lock(&state.modbus_baud),
-        rx_count:  *safe_lock(&state.modbus_rx),
-        tx_count:  *safe_lock(&state.modbus_tx),
+        connected: any_connected,
+        port: summary_port,
+        baud: summary_baud,
+        rx_count: total_rx,
+        tx_count: total_tx,
+        ports: port_statuses,
     }
 }
 
 #[tauri::command]
-pub fn start_modbus_server(port: String, baud: u32, state: State<AppState>, app: AppHandle) -> Result<(), String> {
-    use std::sync::atomic::Ordering;
-
+pub fn start_modbus_server(
+    port: String,
+    baud: u32,
+    machine_filter: Option<PortMachineFilter>,
+    state: State<AppState>,
+    app: AppHandle,
+) -> Result<(), String> {
     // Validate baud rate
-    if !matches!(baud, 2400 | 4800 | 9600 | 19200 | 38400 | 57600 | 115200) {
-        return Err(format!("Invalid baud rate: {}. Supported: 2400, 4800, 9600, 19200, 38400, 57600, 115200", baud));
+    if !matches!(baud, 1200 | 2400 | 4800 | 9600 | 19200 | 38400 | 57600 | 115200) {
+        return Err(format!("Invalid baud rate: {}. Supported: 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200", baud));
     }
 
-    if state.modbus_connected.load(Ordering::SeqCst) {
-        return Err("Modbus server is already running".into());
-    }
+    let filter = machine_filter.unwrap_or_else(|| {
+        let cfg = safe_lock(&state.config);
+        cfg.ports.iter()
+            .find(|p| p.port == port)
+            .map(|p| p.machine_filter.clone())
+            .unwrap_or(PortMachineFilter::All)
+    });
 
-    let stop_flag = Arc::new(AtomicBool::new(false));
-    *safe_lock(&state.modbus_stop) = Some(Arc::clone(&stop_flag));
-    *safe_lock(&state.modbus_port) = port.clone();
-    *safe_lock(&state.modbus_baud) = baud;
-    *safe_lock(&state.modbus_rx) = 0;
-    *safe_lock(&state.modbus_tx) = 0;
-    state.modbus_connected.store(true, Ordering::SeqCst);
+    start_port_server_internal(port.clone(), baud, filter.clone(), &state, app)?;
 
+    // Persist to configuration
     {
         let mut cfg = safe_lock(&state.config);
         cfg.auto_start = true;
         cfg.last_port  = port.clone();
         cfg.last_baud  = baud;
+        if let Some(existing) = cfg.ports.iter_mut().find(|p| p.port == port) {
+            existing.baud = baud;
+            existing.machine_filter = filter;
+            existing.auto_connect = true;
+        } else {
+            cfg.ports.push(crate::types::PortSetting {
+                port: port.clone(),
+                baud,
+                machine_filter: filter,
+                auto_connect: true,
+            });
+        }
     }
     state.save_config();
 
-    let machines          = Arc::clone(&state.machines);
-    let config            = Arc::clone(&state.config);
-    let fault_cfg         = Arc::clone(&state.fault_config);
-    let rx_counter        = Arc::clone(&state.modbus_rx);
-    let tx_counter        = Arc::clone(&state.modbus_tx);
-    let modbus_connected  = Arc::clone(&state.modbus_connected);
-
-    std::thread::spawn(move || {
-        modbus_server_thread(port, baud, stop_flag, machines, config, fault_cfg, rx_counter, tx_counter, app, modbus_connected);
-    });
-
-    state.emit_log("MODBUS", "Modbus: Server started (auto slave ID per machine)");
     Ok(())
 }
 
 #[tauri::command]
-pub fn stop_modbus_server(state: State<AppState>) -> Result<(), String> {
+pub fn stop_modbus_server(port: Option<String>, state: State<AppState>) -> Result<(), String> {
     use std::sync::atomic::Ordering;
 
-    if !state.modbus_connected.load(Ordering::SeqCst) {
-        return Err("Modbus server is not running".into());
+    let mut workers = safe_lock(&state.modbus_workers);
+
+    if let Some(target_port) = port {
+        if let Some(worker) = workers.remove(&target_port) {
+            worker.stop_flag.store(true, Ordering::SeqCst);
+            worker.connected.store(false, Ordering::SeqCst);
+
+            {
+                let mut cfg = safe_lock(&state.config);
+                if let Some(p) = cfg.ports.iter_mut().find(|p| p.port == target_port) {
+                    p.auto_connect = false;
+                }
+            }
+            drop(workers);
+            state.save_config();
+            state.emit_log("MODBUS", &format!("Modbus: Server stopped on {}", target_port));
+            Ok(())
+        } else {
+            Err(format!("Port {} is not running", target_port))
+        }
+    } else {
+        // Stop all ports
+        for (port_name, worker) in workers.drain() {
+            worker.stop_flag.store(true, Ordering::SeqCst);
+            worker.connected.store(false, Ordering::SeqCst);
+            state.emit_log("MODBUS", &format!("Modbus: Server stopped on {}", port_name));
+        }
+        drop(workers);
+        {
+            let mut cfg = safe_lock(&state.config);
+            cfg.auto_start = false;
+            for p in cfg.ports.iter_mut() {
+                p.auto_connect = false;
+            }
+        }
+        state.save_config();
+        state.modbus_connected.store(false, Ordering::SeqCst);
+        Ok(())
     }
-    if let Some(flag) = safe_lock(&state.modbus_stop).take() {
-        flag.store(true, Ordering::SeqCst);
+}
+
+#[tauri::command]
+pub fn start_all_modbus_servers(state: State<AppState>, app: AppHandle) -> Result<(), String> {
+    let ports_to_start: Vec<(String, u32, PortMachineFilter)> = {
+        let cfg = safe_lock(&state.config);
+        cfg.ports.iter().map(|p| (p.port.clone(), p.baud, p.machine_filter.clone())).collect()
+    };
+
+    if ports_to_start.is_empty() {
+        return Err("No ports configured to start".into());
     }
-    state.modbus_connected.store(false, Ordering::SeqCst);
+
+    let mut started = 0;
+    for (port, baud, filter) in ports_to_start {
+        if start_port_server_internal(port.clone(), baud, filter.clone(), &state, app.clone()).is_ok() {
+            started += 1;
+        }
+    }
 
     {
         let mut cfg = safe_lock(&state.config);
-        cfg.auto_start = false;
+        cfg.auto_start = true;
+        for p in cfg.ports.iter_mut() {
+            p.auto_connect = true;
+        }
     }
     state.save_config();
-    state.emit_log("MODBUS", "Modbus: Server stopped by user");
+    state.emit_log("MODBUS", &format!("Modbus: Started {} ports", started));
+    Ok(())
+}
+
+#[tauri::command]
+pub fn stop_all_modbus_servers(state: State<AppState>) -> Result<(), String> {
+    stop_modbus_server(None, state)
+}
+
+#[tauri::command]
+pub fn save_port_config(
+    port: String,
+    baud: u32,
+    machine_filter: PortMachineFilter,
+    auto_connect: bool,
+    state: State<AppState>,
+) -> Result<(), String> {
+    let mut cfg = safe_lock(&state.config);
+    if let Some(existing) = cfg.ports.iter_mut().find(|p| p.port == port) {
+        existing.baud = baud;
+        existing.machine_filter = machine_filter;
+        existing.auto_connect = auto_connect;
+    } else {
+        cfg.ports.push(crate::types::PortSetting {
+            port: port.clone(),
+            baud,
+            machine_filter,
+            auto_connect,
+        });
+    }
+    drop(cfg);
+    state.save_config();
+    Ok(())
+}
+
+#[tauri::command]
+pub fn remove_port_config(port: String, state: State<AppState>) -> Result<(), String> {
+    use std::sync::atomic::Ordering;
+
+    // Stop worker if running
+    let mut workers = safe_lock(&state.modbus_workers);
+    if let Some(worker) = workers.remove(&port) {
+        worker.stop_flag.store(true, Ordering::SeqCst);
+        worker.connected.store(false, Ordering::SeqCst);
+    }
+    drop(workers);
+
+    // Remove from settings
+    {
+        let mut cfg = safe_lock(&state.config);
+        cfg.ports.retain(|p| p.port != port);
+    }
+    state.save_config();
+    state.emit_log("MODBUS", &format!("Modbus: Removed port configuration for {}", port));
     Ok(())
 }
 

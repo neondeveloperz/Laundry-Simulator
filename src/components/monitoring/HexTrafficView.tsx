@@ -21,6 +21,7 @@ export interface HexTrafficViewProps {
 export function HexTrafficView({ frames, onClear }: HexTrafficViewProps) {
   const [paused, setPaused]   = useState(false)
   const [filter, setFilter]   = useState<number | null>(null) // unit_id filter
+  const [portFilter, setPortFilter] = useState<string | null>(null) // port filter
   const [search, setSearch]   = useState("")
   const bottomRef             = useRef<HTMLDivElement>(null)
   const pausedRef             = useRef(false)
@@ -33,15 +34,19 @@ export function HexTrafficView({ frames, onClear }: HexTrafficViewProps) {
     }
   }, [frames, paused])
 
-  // Unique unit IDs seen
+  // Unique unit IDs and ports seen
   const seenIds = [...new Set(frames.map(f => f.unit_id))].sort((a, b) => a - b)
+  const seenPorts = [...new Set(frames.map(f => f.port).filter((p): p is string => Boolean(p)))].sort()
+
   const visible = frames.filter(f => {
     const matchesFilter = filter === null || f.unit_id === filter
+    const matchesPort = portFilter === null || f.port === portFilter
     const matchesSearch = !search ||
       f.hex.toLowerCase().includes(search.toLowerCase()) ||
       f.desc.toLowerCase().includes(search.toLowerCase()) ||
+      (f.port && f.port.toLowerCase().includes(search.toLowerCase())) ||
       String(f.unit_id).includes(search)
-    return matchesFilter && matchesSearch
+    return matchesFilter && matchesPort && matchesSearch
   })
 
   return (
@@ -55,11 +60,44 @@ export function HexTrafficView({ frames, onClear }: HexTrafficViewProps) {
         {/* Search bar */}
         <input
           type="text"
-          placeholder="Search hex / description..."
+          placeholder="Search hex / port / desc..."
           className="h-6 rounded border border-input bg-background px-2 text-[10px] focus:outline-none focus:ring-1 focus:ring-primary w-36 ml-2"
           value={search}
           onChange={e => setSearch(e.target.value)}
         />
+
+        {/* Port filter */}
+        {seenPorts.length > 1 && (
+          <div className="flex items-center gap-1 ml-2">
+            <span className="text-[10px] text-muted-foreground font-mono">PORT:</span>
+            <button
+              onClick={() => setPortFilter(null)}
+              className={cn(
+                "h-5 px-1.5 rounded text-[10px] font-semibold border transition-all",
+                portFilter === null
+                  ? "bg-purple-500/20 text-purple-300 border-purple-500/50"
+                  : "border-border text-muted-foreground hover:border-purple-500/30"
+              )}
+            >
+              ALL
+            </button>
+            {seenPorts.map(p => (
+              <button
+                key={p}
+                onClick={() => setPortFilter(portFilter === p ? null : p)}
+                className={cn(
+                  "h-5 px-1.5 rounded text-[10px] font-mono border transition-all",
+                  portFilter === p
+                    ? "bg-purple-500/20 text-purple-300 border-purple-500/50 font-bold"
+                    : "border-border text-muted-foreground hover:border-purple-500/30"
+                )}
+                title={p}
+              >
+                {p.split("/").pop()}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Unit ID filter */}
         {seenIds.length > 0 && (
@@ -135,6 +173,11 @@ export function HexTrafficView({ frames, onClear }: HexTrafficViewProps) {
             {/* Frame header */}
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-muted-foreground/60 text-[10px]">{frame.timestamp}</span>
+              {frame.port && (
+                <span className="text-[9px] px-1.5 py-0.2 rounded border border-purple-500/30 text-purple-300 font-mono bg-purple-500/10">
+                  {frame.port.split("/").pop()}
+                </span>
+              )}
               <Badge className="text-[9px] h-4 px-1.5 gap-0.5">
                 <ArrowDown size={9} />
                 RX

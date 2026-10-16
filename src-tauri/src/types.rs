@@ -29,7 +29,11 @@ pub enum MachineState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Machine {
-    pub id: u8,
+    pub id: u32,
+    #[serde(default)]
+    pub unit_id: u8,
+    #[serde(default)]
+    pub port: Option<String>,
     pub machine_type: MachineType,
     pub state: MachineState,
     pub coins: u32,
@@ -49,9 +53,11 @@ pub struct Machine {
 }
 
 impl Machine {
-    pub fn new_washer(id: u8) -> Self {
+    pub fn new_washer(id: u32, unit_id: u8, port: Option<String>) -> Self {
         Machine {
             id,
+            unit_id,
+            port,
             machine_type: MachineType::Washer,
             state: MachineState::Idle,
             coins: 0,
@@ -70,9 +76,11 @@ impl Machine {
         }
     }
 
-    pub fn new_dryer(id: u8) -> Self {
+    pub fn new_dryer(id: u32, unit_id: u8, port: Option<String>) -> Self {
         Machine {
             id,
+            unit_id,
+            port,
             machine_type: MachineType::Dryer,
             state: MachineState::Idle,
             coins: 0,
@@ -200,6 +208,42 @@ impl RegisterMapping {
 // CONFIG
 // ============================================================
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum PortMachineFilter {
+    All,
+    WashersOnly,
+    DryersOnly,
+    Custom(Vec<u8>), // specific machine IDs
+}
+
+impl Default for PortMachineFilter {
+    fn default() -> Self {
+        PortMachineFilter::All
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PortSetting {
+    pub port: String,
+    pub baud: u32,
+    #[serde(default)]
+    pub machine_filter: PortMachineFilter,
+    #[serde(default)]
+    pub auto_connect: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PortStatus {
+    pub port: String,
+    pub baud: u32,
+    pub connected: bool,
+    pub rx_count: u64,
+    pub tx_count: u64,
+    pub machine_filter: PortMachineFilter,
+    pub auto_connect: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimulatorConfig {
     pub auto_start: bool,
@@ -212,6 +256,8 @@ pub struct SimulatorConfig {
     pub dryer_programs: Vec<ProgramInfo>,
     pub washer_mapping: RegisterMapping,
     pub dryer_mapping: RegisterMapping,
+    #[serde(default)]
+    pub ports: Vec<PortSetting>,
 }
 
 impl Default for SimulatorConfig {
@@ -239,6 +285,7 @@ impl Default for SimulatorConfig {
             ],
             washer_mapping: RegisterMapping::default(),
             dryer_mapping: RegisterMapping::dryer_default(),
+            ports: Vec::new(),
         }
     }
 }
@@ -254,6 +301,7 @@ pub struct ModbusStatus {
     pub baud: u32,
     pub rx_count: u64,
     pub tx_count: u64,
+    pub ports: Vec<PortStatus>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -268,6 +316,8 @@ pub struct TrafficLog {
     pub direction: String, // "RX" or "TX"
     pub hex: String,
     pub timestamp: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub port: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -281,6 +331,8 @@ pub struct AppInfo {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModbusFrame {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<String>,
     pub unit_id: u8,
     pub function_code: u8,
     pub address: u16,

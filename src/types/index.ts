@@ -23,6 +23,8 @@ export type MachineType = "Washer" | "Dryer"
 
 export interface Machine {
   id: number
+  unit_id: number
+  port?: string
   machine_type: MachineType
   state: MachineState
   coins: number
@@ -80,6 +82,29 @@ export interface RegisterMapping {
   write_program: number
 }
 
+export type PortMachineFilter =
+  | "all"
+  | "washers_only"
+  | "dryers_only"
+  | { custom: number[] }
+
+export interface PortSetting {
+  port: string
+  baud: number
+  machine_filter: PortMachineFilter
+  auto_connect: boolean
+}
+
+export interface PortStatus {
+  port: string
+  baud: number
+  connected: boolean
+  rx_count: number
+  tx_count: number
+  machine_filter: PortMachineFilter
+  auto_connect: boolean
+}
+
 export interface SimulatorConfig {
   auto_start: boolean
   last_port: string
@@ -90,6 +115,7 @@ export interface SimulatorConfig {
   dryer_programs: ProgramInfo[]
   washer_mapping: RegisterMapping
   dryer_mapping: RegisterMapping
+  ports?: PortSetting[]
 }
 
 export interface ModbusStatus {
@@ -98,6 +124,7 @@ export interface ModbusStatus {
   baud: number
   rx_count: number
   tx_count: number
+  ports?: PortStatus[]
 }
 
 export interface LogEntry {
@@ -110,6 +137,7 @@ export interface TrafficLog {
   direction: "RX" | "TX"
   hex: string
   timestamp: string
+  port?: string
 }
 
 export interface AppInfo {
@@ -121,6 +149,7 @@ export interface AppInfo {
 }
 
 export interface ModbusFrame {
+  port?: string
   unit_id: number
   function_code: number
   address: number

@@ -9,7 +9,7 @@ mod simulator;
 mod state;
 mod types;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::{webview::PageLoadEvent, Manager};
 use tauri_plugin_log::{Target, TargetKind};
@@ -80,39 +80,35 @@ pub fn run() {
                 state.simulation_speed.store(cfg.simulation_speed.clamp(1, 10), Ordering::SeqCst);
             }
 
-            // Auto-restart Modbus server if the previous session had it running
+            // Auto-restart Modbus servers if the previous session had it running
             {
                 let cfg = safe_lock(&state.config);
-                if cfg.auto_start && !cfg.last_port.is_empty() {
-                    let port = cfg.last_port.clone();
-                    let baud = cfg.last_baud;
+                if cfg.auto_start {
+                    let ports_to_start = if !cfg.ports.is_empty() {
+                        cfg.ports.clone()
+                    } else if !cfg.last_port.is_empty() {
+                        vec![crate::types::PortSetting {
+                            port: cfg.last_port.clone(),
+                            baud: cfg.last_baud,
+                            machine_filter: crate::types::PortMachineFilter::All,
+                            auto_connect: true,
+                        }]
+                    } else {
+                        Vec::new()
+                    };
                     drop(cfg);
 
-                    let stop_flag = Arc::new(AtomicBool::new(false));
-                    *safe_lock(&state.modbus_stop) = Some(Arc::clone(&stop_flag));
-                    *safe_lock(&state.modbus_port) = port.clone();
-                    *safe_lock(&state.modbus_baud) = baud;
-                    *safe_lock(&state.modbus_rx)   = 0;
-                    *safe_lock(&state.modbus_tx)   = 0;
-                    state.modbus_connected.store(true, Ordering::SeqCst);
-
-                    let machines         = Arc::clone(&state.machines);
-                    let config           = Arc::clone(&state.config);
-                    let fault_cfg        = Arc::clone(&state.fault_config);
-                    let rx_counter       = Arc::clone(&state.modbus_rx);
-                    let tx_counter       = Arc::clone(&state.modbus_tx);
-                    let modbus_connected = Arc::clone(&state.modbus_connected);
-                    let auto_handle      = handle.clone();
-
-                    std::thread::spawn(move || {
-                        modbus::modbus_server_thread(
-                            port, baud, stop_flag,
-                            machines, config, fault_cfg,
-                            rx_counter, tx_counter, auto_handle,
-                            modbus_connected,
-                        );
-                    });
-                    state.emit_log("MODBUS", "Modbus: Auto-started from last session config");
+                    for p in ports_to_start {
+                        if p.auto_connect {
+                            let _ = modbus::start_port_server_internal(
+                                p.port,
+                                p.baud,
+                                p.machine_filter,
+                                &state,
+                                handle.clone(),
+                            );
+                        }
+                    }
                 }
             }
 
@@ -152,6 +148,10 @@ pub fn run() {
             modbus::get_modbus_status,
             modbus::start_modbus_server,
             modbus::stop_modbus_server,
+            modbus::start_all_modbus_servers,
+            modbus::stop_all_modbus_servers,
+            modbus::save_port_config,
+            modbus::remove_port_config,
             modbus::set_fault_mode,
             modbus::get_fault_config,
             // Simulation

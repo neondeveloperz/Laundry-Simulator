@@ -6,10 +6,23 @@ use std::sync::atomic::{AtomicBool, AtomicU32};
 use std::sync::{Arc, Mutex, MutexGuard};
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::types::{LogEntry, Machine, SimulatorConfig, FaultConfig};
+use std::collections::HashMap;
+use crate::types::{FaultConfig, LogEntry, Machine, PortMachineFilter, SimulatorConfig};
 
 /// Max log file size in bytes (10 MB)
 const MAX_LOG_SIZE: u64 = 10 * 1024 * 1024;
+
+/// Running worker for a specific Modbus RTU serial port
+#[allow(dead_code)]
+pub struct ActivePortWorker {
+    pub port: String,
+    pub baud: u32,
+    pub machine_filter: PortMachineFilter,
+    pub stop_flag: Arc<AtomicBool>,
+    pub connected: Arc<AtomicBool>,
+    pub rx_counter: Arc<Mutex<u64>>,
+    pub tx_counter: Arc<Mutex<u64>>,
+}
 
 /// Helper to lock a mutex with poisoning recovery.
 /// If a thread panicked while holding the lock, we recover the inner data
@@ -26,10 +39,14 @@ pub struct AppState {
     pub config:            Arc<Mutex<SimulatorConfig>>,
     pub app_handle:        Mutex<Option<AppHandle>>,
     pub fault_config:      Arc<Mutex<FaultConfig>>,
-    // Modbus server
+    // Modbus multi-port workers
+    pub modbus_workers:    Arc<Mutex<HashMap<String, ActivePortWorker>>>,
+    // Legacy/Aggregate Modbus server state
+    #[allow(dead_code)]
     pub modbus_stop:       Mutex<Option<Arc<AtomicBool>>>,
     pub modbus_connected:  Arc<AtomicBool>,
     pub modbus_port:       Mutex<String>,
+    #[allow(dead_code)]
     pub modbus_baud:       Mutex<u32>,
     pub modbus_rx:         Arc<Mutex<u64>>,
     pub modbus_tx:         Arc<Mutex<u64>>,
@@ -48,6 +65,7 @@ impl AppState {
             config:            Arc::new(Mutex::new(SimulatorConfig::default())),
             app_handle:        Mutex::new(None),
             fault_config:      Arc::new(Mutex::new(FaultConfig::default())),
+            modbus_workers:    Arc::new(Mutex::new(HashMap::new())),
             modbus_stop:       Mutex::new(None),
             modbus_connected:  Arc::new(AtomicBool::new(false)),
             modbus_port:       Mutex::new(String::new()),
@@ -81,7 +99,12 @@ impl AppState {
             if let Ok(app_dir) = handle.path().app_config_dir() {
                 let path = app_dir.join("machines.json");
                 if let Ok(data) = std::fs::read_to_string(path) {
-                    if let Ok(saved) = serde_json::from_str::<Vec<Machine>>(&data) {
+                    if let Ok(mut saved) = serde_json::from_str::<Vec<Machine>>(&data) {
+                        for item in &mut saved {
+                            if item.unit_id == 0 {
+                                item.unit_id = item.id as u8;
+                            }
+                        }
                         let mut m = safe_lock(&self.machines);
                         *m = saved;
                     }

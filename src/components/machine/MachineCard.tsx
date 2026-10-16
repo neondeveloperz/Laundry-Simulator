@@ -226,12 +226,25 @@ export function MachineCard({ machine, onRefresh, onToast, config }: MachineCard
             ? <Waves size={22} className="text-primary/70" />
             : <Wind  size={22} className="text-amber-400/70" />
           }
-          <div>
-            <h3 className="font-bold text-sm leading-tight">
-              {machine.machine_type}{" "}
-              <span className="text-muted-foreground font-normal">#{machine.id}</span>
-            </h3>
-            <p className="text-[10px] text-muted-foreground">UNIT ID: {machine.id}</p>
+          <div className="flex flex-col">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <h3 className="font-bold text-sm leading-tight">
+                {machine.machine_type}{" "}
+                <span className="text-primary font-bold">#{machine.unit_id}</span>
+              </h3>
+              {machine.port ? (
+                <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 font-mono border-purple-500/40 text-purple-400 bg-purple-500/10 shrink-0">
+                  {machine.port.split("/").pop()}
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="text-[9px] px-1.5 py-0 h-4 font-mono text-muted-foreground/60 shrink-0">
+                  All
+                </Badge>
+              )}
+            </div>
+            <p className="text-[10px] text-muted-foreground font-mono">
+              Unit ID: <span className="font-bold text-foreground">{machine.unit_id}</span> · Dev #{machine.id}
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-1">
@@ -258,8 +271,9 @@ export function MachineCard({ machine, onRefresh, onToast, config }: MachineCard
             variant="ghost"
             className="h-6 w-6 text-destructive hover:bg-destructive/10"
             onClick={() => {
-              if (window.confirm(`Remove ${machine.machine_type} #${machine.id}?`))
-                cmd("remove_machine", { unitId: machine.id })
+              const portText = machine.port ? ` on ${machine.port.split("/").pop()}` : ""
+              if (window.confirm(`Remove ${machine.machine_type} #${machine.unit_id}${portText}?`))
+                cmd("remove_machine", { machineId: machine.id, unitId: machine.id })
             }}
             title="Remove Machine"
           >
@@ -468,7 +482,7 @@ export function MachineCard({ machine, onRefresh, onToast, config }: MachineCard
                 [`${40000 + map.program} PROG`,  machine.program],
                 [`${40000 + map.coins} COINS`, machine.coins],
                 [`${40000 + map.total_coins} TOTAL`, machine.total_coins],
-                [`${40000 + map.machine_id} UID`,   machine.id],
+                [`${40000 + map.machine_id} UID`,   machine.unit_id],
               ].map(([k, v]) => (
                 <div key={String(k)} className="flex justify-between bg-muted/50 rounded px-1.5 py-0.5">
                   <span className="text-muted-foreground">{k}</span>

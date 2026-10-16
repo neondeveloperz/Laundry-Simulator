@@ -9,17 +9,21 @@ import type {
   AppInfo,
   ModbusStatus,
   FaultConfig,
+  PortMachineFilter,
 } from "@/types"
 
 // ── Machine CRUD ───────────────────────────────────────────────
 export const getAllMachines = () =>
   trackedInvoke<Machine[]>("get_all_machines")
 
-export const addMachine = (machineTypeStr: "Washer" | "Dryer", unitId: number) =>
-  trackedInvoke<Machine>("add_machine", { machineTypeStr, unitId })
+export const addMachine = (
+  machineTypeStr: "Washer" | "Dryer",
+  unitId: number,
+  port?: string,
+) => trackedInvoke<Machine>("add_machine", { machineTypeStr, unitId, port: port ?? null })
 
-export const removeMachine = (unitId: number) =>
-  trackedInvoke<void>("remove_machine", { unitId })
+export const removeMachine = (machineId: number) =>
+  trackedInvoke<void>("remove_machine", { machineId, unitId: machineId })
 
 // ── Machine Control ────────────────────────────────────────────
 export const insertCoin = (machineId: number, amount: number) =>
@@ -75,11 +79,30 @@ export const listSerialPorts = () =>
 export const getModbusStatus = () =>
   trackedInvoke<ModbusStatus>("get_modbus_status")
 
-export const startModbusServer = (port: string, baud: number) =>
-  trackedInvoke<void>("start_modbus_server", { port, baud })
+export const startModbusServer = (
+  port: string,
+  baud: number,
+  machineFilter?: PortMachineFilter,
+) => trackedInvoke<void>("start_modbus_server", { port, baud, machineFilter: machineFilter ?? null })
 
-export const stopModbusServer = () =>
-  trackedInvoke<void>("stop_modbus_server")
+export const stopModbusServer = (port?: string) =>
+  trackedInvoke<void>("stop_modbus_server", { port: port ?? null })
+
+export const startAllModbusServers = () =>
+  trackedInvoke<void>("start_all_modbus_servers")
+
+export const stopAllModbusServers = () =>
+  trackedInvoke<void>("stop_all_modbus_servers")
+
+export const savePortConfig = (
+  port: string,
+  baud: number,
+  machineFilter: PortMachineFilter,
+  autoConnect: boolean,
+) => trackedInvoke<void>("save_port_config", { port, baud, machineFilter, autoConnect })
+
+export const removePortConfig = (port: string) =>
+  trackedInvoke<void>("remove_port_config", { port })
 
 export const setFaultMode = (config: FaultConfig) =>
   trackedInvoke<void>("set_fault_mode", { config })

@@ -284,7 +284,7 @@ export default function App() {
                     config={config}
                   />
                 ))}
-                <AddMachineCard nextId={nextId} onAdd={fetchMachines} onToast={addToast} />
+                <AddMachineCard nextId={nextId} onAdd={fetchMachines} onToast={addToast} machines={machines} />
               </div>
             </div>
           </div>
@@ -293,7 +293,7 @@ export default function App() {
       case "modbus":
         return (
           <div className="flex-1 overflow-y-auto" data-ui-scroll-container>
-            <Rs485Panel onToast={addToast} onRefresh={fetchMachines} />
+            <Rs485Panel onToast={addToast} onRefresh={fetchMachines} machines={machines} />
           </div>
         )
 
