@@ -38,12 +38,17 @@ pub fn get_program_steps(m_type: MachineType, program: u8, cfg: &SimulatorConfig
                 return s.clone();
             }
         }
-        return get_default_steps(m_type, prog.minutes);
+        return get_default_steps_for_program(m_type, program, prog.minutes);
     }
-    get_default_steps(m_type, 30)
+    get_default_steps_for_program(m_type, program, 30)
 }
 
+#[allow(dead_code)]
 pub fn get_default_steps(machine_type: MachineType, duration_mins: u32) -> Vec<ProgramStep> {
+    get_default_steps_for_program(machine_type, 1, duration_mins)
+}
+
+pub fn get_default_steps_for_program(machine_type: MachineType, program: u8, duration_mins: u32) -> Vec<ProgramStep> {
     match machine_type {
         MachineType::Washer => vec![
             ProgramStep {
@@ -75,22 +80,30 @@ pub fn get_default_steps(machine_type: MachineType, duration_mins: u32) -> Vec<P
                 target_rpm: 1200,
             },
         ],
-        MachineType::Dryer => vec![
-            ProgramStep {
-                name: "Drying".into(),
-                duration_mins: (duration_mins * 85 / 100).max(1),
-                target_water: 0,
-                target_temp: 65,
-                target_rpm: 50,
-            },
-            ProgramStep {
-                name: "Cool Down".into(),
-                duration_mins: (duration_mins * 15 / 100).max(1),
-                target_water: 0,
-                target_temp: 25,
-                target_rpm: 40,
-            },
-        ],
+        MachineType::Dryer => {
+            let target_temp = match program {
+                1 => 50,
+                2 => 65,
+                3 => 75,
+                _ => 65,
+            };
+            vec![
+                ProgramStep {
+                    name: "Drying".into(),
+                    duration_mins: (duration_mins * 85 / 100).max(1),
+                    target_water: 0,
+                    target_temp,
+                    target_rpm: 50,
+                },
+                ProgramStep {
+                    name: "Cool Down".into(),
+                    duration_mins: (duration_mins * 15 / 100).max(1),
+                    target_water: 0,
+                    target_temp: 25,
+                    target_rpm: 40,
+                },
+            ]
+        }
     }
 }
 

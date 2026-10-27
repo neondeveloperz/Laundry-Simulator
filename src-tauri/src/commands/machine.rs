@@ -36,9 +36,11 @@ pub fn add_machine(
 
     let machine = {
         let mut m = safe_lock(&state.machines);
-        // Unit ID can be identical across DIFFERENT ports.
-        // It must only be unique on the SAME port (or within All ports):
-        if m.iter().any(|existing| existing.unit_id == unit_id && existing.port == clean_port) {
+        // Unit ID can be identical across DIFFERENT specific ports.
+        // It must be unique on the SAME port, and cannot overlap with 'All Ports':
+        if m.iter().any(|existing| {
+            existing.unit_id == unit_id && (existing.port.is_none() || clean_port.is_none() || existing.port == clean_port)
+        }) {
             let port_desc = clean_port.as_deref().unwrap_or("All Ports");
             return Err(format!("Unit ID {} is already in use on {}", unit_id, port_desc));
         }
@@ -64,12 +66,19 @@ pub fn add_machine(
 pub fn remove_machine(
     machine_id: Option<u32>,
     unit_id: Option<u32>,
+    id: Option<u32>,
     state: State<AppState>,
 ) -> Result<(), String> {
-    let target_id = machine_id.or(unit_id).ok_or("Missing machine ID")?;
+    let target_id = machine_id.or(id).or(unit_id).ok_or("Missing machine ID")?;
     {
         let mut m = safe_lock(&state.machines);
-        let pos = m.iter().position(|m| m.id == target_id).ok_or("Machine not found")?;
+        let pos = if let Some(p) = m.iter().position(|m| m.id == target_id) {
+            p
+        } else if let Some(p) = m.iter().position(|m| m.unit_id as u32 == target_id) {
+            p
+        } else {
+            return Err("Machine not found".into());
+        };
         m.remove(pos);
     }
     state.save_machines();

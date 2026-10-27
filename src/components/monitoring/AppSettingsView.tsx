@@ -18,43 +18,43 @@ const SPEED_OPTIONS = [
 ]
 
 const READ_FIELDS = [
-  { key: "state",       label: "STATE",       defaultVal: 20,  desc: "Machine State" },
-  { key: "door_status", label: "DOOR",        defaultVal: 21,  desc: "Door Status (0-6)" },
-  { key: "error_flag",  label: "ERR_FLAG",    defaultVal: 22,  desc: "Error Flag" },
-  { key: "time_min",    label: "TIME_MIN",    defaultVal: 23,  desc: "Time Remaining Min" },
-  { key: "time_sec",    label: "TIME_SEC",    defaultVal: 24,  desc: "Time Remaining Sec" },
-  { key: "water_level", label: "WATER",       defaultVal: 28,  desc: "Water Level (%)" },
-  { key: "temperature", label: "TEMP_x10",    defaultVal: 30,  desc: "Temp x10 (C)" },
-  { key: "rpm",         label: "RPM",         defaultVal: 32,  desc: "Drum Speed (rpm)" },
-  { key: "program",     label: "PROGRAM",     defaultVal: 34,  desc: "Active Program ID" },
-  { key: "coins",       label: "COINS",       defaultVal: 37,  desc: "Current Credit" },
-  { key: "total_coins", label: "TOTAL_COINS", defaultVal: 38,  desc: "Lifetime Credit" },
-  { key: "machine_id",  label: "UNIT_ID",     defaultVal: 40,  desc: "Slave Unit ID" },
-  { key: "error_code",  label: "ERR_CODE",    defaultVal: 60,  desc: "Error Code" },
+  { key: "water_level", label: "WATER",       defaultVal: 801, desc: "Water Level (cm)" },
+  { key: "temperature", label: "TEMP",        defaultVal: 802, desc: "Temperature (°C 1:1)" },
+  { key: "time_min",    label: "TIME_MIN",    defaultVal: 803, desc: "Time Remaining Min" },
+  { key: "time_sec",    label: "TIME_SEC",    defaultVal: 804, desc: "Time Remaining Sec" },
+  { key: "error_code",  label: "ERR_CODE",    defaultVal: 805, desc: "Error Code" },
+  { key: "rpm",         label: "RPM",         defaultVal: 813, desc: "Drum Speed (rpm)" },
+  { key: "total_coins", label: "TOTAL_COINS", defaultVal: 814, desc: "Lifetime Credit" },
+  { key: "program",     label: "PROGRAM",     defaultVal: 818, desc: "Active Program ID" },
+  { key: "state",       label: "STATE / STEP",defaultVal: 819, desc: "Machine State / Step" },
+  { key: "coins",       label: "COINS",       defaultVal: 835, desc: "Current Credit" },
+  { key: "door_status", label: "DOOR",        defaultVal: 110, desc: "Door Status (0/1/ok)" },
+  { key: "error_flag",  label: "ERR_FLAG",    defaultVal: 52,  desc: "Error Flag (LB)" },
+  { key: "machine_id",  label: "UNIT_ID",     defaultVal: 1,   desc: "Slave Unit ID" },
 ]
 
 const WRITE_FIELDS = [
-  { key: "write_error_reset", label: "ERR_RESET",  defaultVal: 0, desc: "Write 1 to Reset" },
-  { key: "write_start",       label: "START",      defaultVal: 1, desc: "Write 1 to Start" },
-  { key: "write_advance",     label: "ADVANCE",    defaultVal: 2, desc: "Write 1 to Advance" },
-  { key: "write_stop",        label: "STOP",       defaultVal: 3, desc: "Write 1 to Stop" },
-  { key: "write_coins",       label: "SET_CREDIT", defaultVal: 4, desc: "Write balance" },
-  { key: "write_program",     label: "SET_PROG",   defaultVal: 5, desc: "Write active prog" },
+  { key: "write_error_reset", label: "ERR_RESET",  defaultVal: 301, desc: "Write 1 to Reset Alarm" },
+  { key: "write_start",       label: "START",      defaultVal: 303, desc: "Write 1 to Remote Start" },
+  { key: "write_advance",     label: "ADVANCE",    defaultVal: 304, desc: "Write 1 to Next Step" },
+  { key: "write_stop",        label: "STOP",       defaultVal: 305, desc: "Write 1 to Remote Stop" },
+  { key: "write_coins",       label: "SET_CREDIT", defaultVal: 306, desc: "Write balance / coins" },
+  { key: "write_program",     label: "SET_PROG",   defaultVal: 307, desc: "Write active prog (1-30)" },
 ]
 
 const getFieldDefault = (tab: "washer" | "dryer", key: string): number => {
   if (tab === "washer") {
     const wDefaults: Record<string, number> = {
-      state: 20, door_status: 21, error_flag: 22, time_min: 23, time_sec: 24,
-      water_level: 28, temperature: 30, rpm: 32, program: 34, coins: 37, total_coins: 38, machine_id: 40, error_code: 60,
-      write_error_reset: 0, write_start: 1, write_advance: 2, write_stop: 3, write_coins: 4, write_program: 5
+      state: 818, door_status: 110, error_flag: 52, time_min: 803, time_sec: 804,
+      water_level: 801, temperature: 802, rpm: 813, program: 818, coins: 835, total_coins: 814, machine_id: 1, error_code: 805,
+      write_error_reset: 301, write_start: 303, write_advance: 304, write_stop: 305, write_coins: 306, write_program: 307
     }
     return wDefaults[key] ?? 0
   } else {
     const dDefaults: Record<string, number> = {
-      state: 20, door_status: 21, error_flag: 22, time_min: 23, time_sec: 24,
-      water_level: 28, temperature: 30, rpm: 32, program: 34, coins: 37, total_coins: 38, machine_id: 40, error_code: 60,
-      write_error_reset: 0, write_start: 1, write_advance: 2, write_stop: 99, write_coins: 3, write_program: 4
+      state: 804, door_status: 804, error_flag: 18, time_min: 806, time_sec: 807,
+      water_level: 0, temperature: 801, rpm: 128, program: 307, coins: 834, total_coins: 836, machine_id: 1, error_code: 33,
+      write_error_reset: 301, write_start: 303, write_advance: 304, write_stop: 304, write_coins: 306, write_program: 307
     }
     return dDefaults[key] ?? 0
   }

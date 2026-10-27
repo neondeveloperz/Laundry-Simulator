@@ -52,6 +52,16 @@ pub fn reset_all_data(state: State<AppState>, app: AppHandle) -> Result<(), Stri
         safe_lock(&state.machines).clear();
         *safe_lock(&state.config) = SimulatorConfig::default();
     }
+    // Stop and clear all active modbus port workers
+    {
+        let mut workers = safe_lock(&state.modbus_workers);
+        for (_, worker) in workers.drain() {
+            worker.stop_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            worker.connected.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    state.modbus_connected.store(false, std::sync::atomic::Ordering::SeqCst);
+
     if let Ok(app_dir) = app.path().app_config_dir() {
         let _ = std::fs::remove_file(app_dir.join("machines.json"));
         let _ = std::fs::remove_file(app_dir.join("settings.json"));

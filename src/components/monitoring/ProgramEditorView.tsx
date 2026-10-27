@@ -14,14 +14,12 @@ const WASHER_DEFAULTS: ProgramInfo[] = [
   { id: 5, label: "Sanitize", minutes: 75, price: 60, steps: [] },
 ]
 const DRYER_DEFAULTS: ProgramInfo[] = [
-  { id: 1, label: "Air Dry", minutes: 20, price: 20, steps: [] },
-  { id: 2, label: "Low Heat", minutes: 35, price: 30, steps: [] },
-  { id: 3, label: "Normal", minutes: 45, price: 40, steps: [] },
-  { id: 4, label: "High Heat", minutes: 60, price: 50, steps: [] },
-  { id: 5, label: "Extra Dry", minutes: 75, price: 60, steps: [] },
+  { id: 1, label: "Low Temp (50°C)", minutes: 30, price: 30, steps: [] },
+  { id: 2, label: "Medium Temp (65°C)", minutes: 40, price: 40, steps: [] },
+  { id: 3, label: "High Temp (75°C)", minutes: 50, price: 50, steps: [] },
 ]
 
-const GET_DEFAULT_STEPS = (type: "Washer" | "Dryer", duration: number): ProgramStep[] => {
+const GET_DEFAULT_STEPS = (type: "Washer" | "Dryer", duration: number, progId: number = 1): ProgramStep[] => {
   if (type === "Washer") {
     return [
       { name: "Filling", duration_mins: Math.max(1, Math.round(duration * 0.3)), target_water: 100, target_temp: 30, target_rpm: 0 },
@@ -30,8 +28,9 @@ const GET_DEFAULT_STEPS = (type: "Washer" | "Dryer", duration: number): ProgramS
       { name: "Spinning", duration_mins: Math.max(1, Math.round(duration * 0.1)), target_water: 0, target_temp: 25, target_rpm: 1200 },
     ]
   } else {
+    const target_temp = progId === 1 ? 50 : progId === 3 ? 75 : 65;
     return [
-      { name: "Drying", duration_mins: Math.max(1, Math.round(duration * 0.85)), target_water: 0, target_temp: 65, target_rpm: 50 },
+      { name: "Drying", duration_mins: Math.max(1, Math.round(duration * 0.85)), target_water: 0, target_temp, target_rpm: 50 },
       { name: "Cool Down", duration_mins: Math.max(1, Math.round(duration * 0.15)), target_water: 0, target_temp: 25, target_rpm: 40 },
     ]
   }
@@ -78,7 +77,7 @@ export function ProgramEditorView({ onToast }: { onToast: (type: Toast["type"], 
   // Seeding steps if empty
   const activeSteps = activeProgram.steps && activeProgram.steps.length > 0
     ? activeProgram.steps
-    : GET_DEFAULT_STEPS(selectedType, activeProgram.minutes)
+    : GET_DEFAULT_STEPS(selectedType, activeProgram.minutes, activeProgram.id)
 
   const updateActiveSteps = (newSteps: ProgramStep[]) => {
     // Recalculate total duration based on sum of steps duration
@@ -99,11 +98,11 @@ export function ProgramEditorView({ onToast }: { onToast: (type: Toast["type"], 
       // Before saving, ensure all programs have seeded steps if they are empty
       const washerToSave = washerProgs.map(p => ({
         ...p,
-        steps: p.steps && p.steps.length > 0 ? p.steps : GET_DEFAULT_STEPS("Washer", p.minutes)
+        steps: p.steps && p.steps.length > 0 ? p.steps : GET_DEFAULT_STEPS("Washer", p.minutes, p.id)
       }))
       const dryerToSave = dryerProgs.map(p => ({
         ...p,
-        steps: p.steps && p.steps.length > 0 ? p.steps : GET_DEFAULT_STEPS("Dryer", p.minutes)
+        steps: p.steps && p.steps.length > 0 ? p.steps : GET_DEFAULT_STEPS("Dryer", p.minutes, p.id)
       }))
 
       await updateSimulatorPrograms(washerToSave, dryerToSave)
@@ -119,8 +118,8 @@ export function ProgramEditorView({ onToast }: { onToast: (type: Toast["type"], 
   }
 
   const handleReset = () => {
-    setWasherProgs(WASHER_DEFAULTS.map(p => ({ ...p, steps: GET_DEFAULT_STEPS("Washer", p.minutes) })))
-    setDryerProgs(DRYER_DEFAULTS.map(p => ({ ...p, steps: GET_DEFAULT_STEPS("Dryer", p.minutes) })))
+    setWasherProgs(WASHER_DEFAULTS.map(p => ({ ...p, steps: GET_DEFAULT_STEPS("Washer", p.minutes, p.id) })))
+    setDryerProgs(DRYER_DEFAULTS.map(p => ({ ...p, steps: GET_DEFAULT_STEPS("Dryer", p.minutes, p.id) })))
     setWasherDirty(true)
     setDryerDirty(true)
     onToast("info", "Reset programs to standard factory cycles. Click Save to apply.")

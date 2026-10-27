@@ -23,7 +23,7 @@ export const addMachine = (
 ) => trackedInvoke<Machine>("add_machine", { machineTypeStr, unitId, port: port ?? null })
 
 export const removeMachine = (machineId: number) =>
-  trackedInvoke<void>("remove_machine", { machineId, unitId: machineId })
+  trackedInvoke<void>("remove_machine", { machineId, unitId: machineId, id: machineId })
 
 // ── Machine Control ────────────────────────────────────────────
 export const insertCoin = (machineId: number, amount: number) =>

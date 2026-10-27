@@ -2,39 +2,79 @@
 import { useState, useEffect, useCallback } from "react"
 import { Table, RefreshCw, ChevronDown, LayoutGrid, Eye } from "lucide-react"
 import { getAllMachines, getConfig } from "@/lib/commands"
-import type { Machine, MachineState, SimulatorConfig } from "@/types"
+import type { Machine, SimulatorConfig } from "@/types"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 
-const DEFAULT_MAPPING = {
-  state: 20, door_status: 21, error_flag: 22, time_min: 23, time_sec: 24,
-  water_level: 28, temperature: 30, rpm: 32, program: 34, coins: 37, total_coins: 38, machine_id: 40, error_code: 60
+const WASHER_DEFAULT_MAPPING = {
+  water_level: 801,
+  temperature: 802,
+  time_min: 803,
+  time_sec: 804,
+  error_code: 805,
+  rpm: 813,
+  total_coins: 814,
+  program: 818,
+  state: 819,
+  machine_id: 1,
+  error_flag: 52,
+  door_status: 110,
+  coins: 835,
+}
+
+const DRYER_DEFAULT_MAPPING = {
+  temperature: 801,
+  state: 804,
+  door_status: 804,
+  time_min: 806,
+  time_sec: 807,
+  water_level: 0,
+  rpm: 128,
+  program: 307,
+  coins: 834,
+  total_coins: 836,
+  machine_id: 1,
+  error_code: 33,
+  error_flag: 18,
 }
 
 function getRegisterMetaList(m: Machine, config: SimulatorConfig | null) {
-  const map = m.machine_type === "Washer"
-    ? config?.washer_mapping ?? DEFAULT_MAPPING
-    : config?.dryer_mapping ?? DEFAULT_MAPPING;
-
-  const stateCode = (s: MachineState) =>
-    s === "Idle" || s === "Completed" ? 1 : 3
-
-  return [
-    { addr: 40000 + map.state,       name: "STATE",       desc: "Machine state code", value: stateCode(m.state) },
-    { addr: 40000 + map.door_status, name: "DOOR",        desc: "Door status (0-6)", value: m.door_status },
-    { addr: 40000 + map.error_flag,  name: "ERR_FLAG",    desc: "Error present flag", value: m.error_code > 0 ? 1 : 0 },
-    { addr: 40000 + map.time_min,    name: "TIME_MIN",    desc: "Time remaining minutes", unit: "min", value: Math.floor(m.time_remaining / 60) },
-    { addr: 40000 + map.time_sec,    name: "TIME_SEC",    desc: "Time remaining seconds", unit: "s", value: m.time_remaining % 60 },
-    { addr: 40000 + map.water_level, name: "WATER",       desc: "Water level",            unit: "%", value: m.water_level },
-    { addr: 40000 + map.temperature, name: "TEMP_x10",    desc: "Temperature × 10",       unit: "°C×10", value: Math.round(m.temperature * 10) },
-    { addr: 40000 + map.rpm,         name: "RPM",         desc: "Drum speed",             unit: "rpm", value: m.rpm },
-    { addr: 40000 + map.program,     name: "PROGRAM",     desc: "Active program ID (1-5)", value: m.program },
-    { addr: 40000 + map.coins,       name: "COINS",       desc: "Current credit balance",  unit: "฿", value: m.coins },
-    { addr: 40000 + map.total_coins, name: "TOTAL_COINS", desc: "Lifetime coin total",     unit: "฿", value: m.total_coins },
-    { addr: 40000 + map.machine_id,  name: "UNIT_ID",     desc: "Modbus slave unit ID", value: m.id },
-    { addr: 40000 + map.error_code,  name: "ERR_CODE",    desc: "Error code (0=none)", value: m.error_code },
-  ]
+  if (m.machine_type === "Washer") {
+    const map = config?.washer_mapping ?? WASHER_DEFAULT_MAPPING;
+    return [
+      { addr: map.water_level, name: "WATER_LEVEL", desc: "Real-time water level", unit: "cm", value: m.water_level },
+      { addr: map.temperature, name: "TEMPERATURE", desc: "Water temperature (1:1)", unit: "°C", value: Math.round(m.temperature) },
+      { addr: map.time_min,    name: "STEP_MIN",    desc: "Active step remaining min", unit: "min", value: Math.floor(m.time_remaining / 60) },
+      { addr: map.time_sec,    name: "STEP_SEC",    desc: "Active step remaining sec", unit: "s", value: m.time_remaining % 60 },
+      { addr: map.error_code,  name: "ERR_CODE",    desc: "Prompt / Alarm code (0=OK)", value: m.error_code },
+      { addr: map.rpm,         name: "DRUM_RPM",    desc: "Motor drum rotation speed", unit: "rpm", value: m.rpm },
+      { addr: map.total_coins, name: "TOTAL_COINS", desc: "Lifetime coin total", unit: "฿", value: m.total_coins },
+      { addr: map.program,     name: "PROGRAM",     desc: "Selected wash program (1-30)", value: m.program },
+      { addr: map.state,       name: "STEP_ID",     desc: "Active phase (1:Fill, 2:Wash, 3:Rinse, 4:Spin)", value: m.time_remaining > 0 ? (m.current_step + 1) : 0 },
+      { addr: 833,             name: "TOTAL_HOURS", desc: "Lifetime machine running hours", unit: "h", value: Math.floor(m.time_remaining / 3600) },
+      { addr: map.coins,       name: "COINS",       desc: "Coins inserted current cycle", unit: "฿", value: m.coins },
+      { addr: map.door_status, name: "DOOR_STATUS", desc: "Door closed status (1=OK, 0=Open)", value: m.door_status !== 1 ? 1 : 0 },
+    ];
+  } else {
+    const map = config?.dryer_mapping ?? DRYER_DEFAULT_MAPPING;
+    const dryerStateVal = m.door_status === 1 ? 0 : (m.state === "Idle" || m.state === "Completed") ? 1 : 2;
+    return [
+      { addr: map.temperature, name: "TEMP_ACTUAL",  desc: "Drum actual temperature (1:1)", unit: "°C", value: Math.round(m.temperature) },
+      { addr: map.state,       name: "STATE_DOOR",   desc: "0=Door Open, 1=Idle, 2=Running", value: dryerStateVal },
+      { addr: 805,             name: "TEMP_TARGET",  desc: "Set target temperature", unit: "°C", value: Math.round(m.set_temp) },
+      { addr: map.time_min,    name: "TIME_MIN",     desc: "Cycle remaining minutes", unit: "min", value: Math.floor(m.time_remaining / 60) },
+      { addr: map.time_sec,    name: "TIME_SEC",     desc: "Cycle remaining seconds", unit: "s", value: m.time_remaining % 60 },
+      { addr: 811,             name: "TEMP_OUTLET",  desc: "Air exhaust temperature", unit: "°C", value: Math.round(m.temperature) },
+      { addr: 813,             name: "TOTAL_HOURS",  desc: "Total running hours", unit: "h", value: Math.floor(m.time_remaining / 3600) },
+      { addr: 814,             name: "TOTAL_MINS",   desc: "Total running minutes", unit: "min", value: Math.floor((m.time_remaining % 3600) / 60) },
+      { addr: 817,             name: "TEMP_INLET",   desc: "Heater inlet temperature", unit: "°C", value: 75 },
+      { addr: map.coins,       name: "COINS",        desc: "Coins in current cycle", unit: "฿", value: m.coins },
+      { addr: 835,             name: "COINS_BOX",    desc: "Coins in cashbox", unit: "฿", value: m.total_coins },
+      { addr: map.total_coins, name: "TOTAL_COINS",  desc: "Total lifetime coins", unit: "฿", value: m.total_coins },
+      { addr: map.program,     name: "PROGRAM",      desc: "Selected heat (1:Low, 2:Mid, 3:High)", value: m.program },
+    ];
+  }
 }
 
 const STATE_NAMES: Record<number, string> = {

@@ -14,7 +14,7 @@ import {
 import { getAllMachines, getConfig, getModbusStatus, setSimulationMode } from "@/lib/commands"
 import type { Machine, SimulatorConfig, LogEntry, ModbusStatus, ModbusFrame } from "@/types"
 import { useToast } from "@/hooks/useToast"
-import { check as checkUpdate } from "@tauri-apps/plugin-updater"
+import { check as checkUpdate, type Update } from "@tauri-apps/plugin-updater"
 import { relaunch } from "@tauri-apps/plugin-process"
 
 import { AppSidebar, type AppView } from "@/components/app-sidebar"
@@ -32,6 +32,7 @@ import { VirtualPlcView } from "@/components/monitoring/VirtualPlcView"
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
 // ── Placeholder panels ──────────────────────────────────────────
@@ -121,46 +122,44 @@ export default function App() {
   }, [fetchMachines, fetchConfig, pollModbus])
 
   // ── Auto Update System ─────────────────────────────────────
+  const [pendingUpdate, setPendingUpdate] = useState<Update | null>(null)
+  const [isUpdating, setIsUpdating] = useState(false)
+
   useEffect(() => {
     async function performAutoUpdate() {
       try {
         const update = await checkUpdate()
         if (update) {
-          // Ask user before installing
-          const confirmed = window.confirm(
-            `มีอัปเดตใหม่: v${update.version}\n\nต้องการดาวน์โหลดและติดตั้งเลยหรือไม่?`
-          )
-          if (!confirmed) {
-            addToast("info", `Skipped update v${update.version}`)
-            return
-          }
-
-          addToast("info", `Downloading update v${update.version}...`)
-          
-          await update.downloadAndInstall((event) => {
-            switch (event.event) {
-              case "Started":
-                console.log("Auto-update download started.")
-                break
-              case "Progress":
-                console.log(`Auto-update downloaded ${event.data.chunkLength} bytes.`)
-                break
-              case "Finished":
-                addToast("success", "Update installed successfully! Restarting app...")
-                break
-            }
-          })
-
-          await relaunch()
+          setPendingUpdate(update)
+          addToast("info", `มีเวอร์ชันใหม่ v${update.version} พร้อมอัปเดต`)
         }
       } catch (err) {
-        console.error("Auto update failed:", err)
+        console.error("Auto update check failed:", err)
       }
     }
 
-    const timer = setTimeout(performAutoUpdate, 5000)
+    const timer = setTimeout(performAutoUpdate, 4000)
     return () => clearTimeout(timer)
   }, [addToast])
+
+  const handleApplyUpdate = async () => {
+    if (!pendingUpdate) return
+    setIsUpdating(true)
+    try {
+      addToast("info", `Downloading update v${pendingUpdate.version}...`)
+      await pendingUpdate.downloadAndInstall((event) => {
+        switch (event.event) {
+          case "Finished":
+            addToast("success", "Update installed! Restarting app...")
+            break
+        }
+      })
+      await relaunch()
+    } catch (err) {
+      addToast("error", `Update failed: ${String(err)}`)
+      setIsUpdating(false)
+    }
+  }
 
   // ── Derived stats ──────────────────────────────────────────
   const activeCount = machines.filter(m => !["Idle", "Completed", "Error"].includes(m.state)).length
@@ -340,6 +339,37 @@ export default function App() {
 
         <SidebarInset>
           <SiteHeader view={view} />
+
+          {/* Pending auto-update notification bar */}
+          {pendingUpdate && (
+            <div className="bg-primary/15 border-b border-primary/30 px-4 py-2 flex items-center justify-between text-xs flex-shrink-0 animate-in fade-in slide-in-from-top-2 duration-200">
+              <div className="flex items-center gap-2">
+                <Zap size={14} className="text-primary animate-pulse" />
+                <span className="font-medium text-foreground">
+                  มีอัปเดตใหม่: <strong className="text-primary font-bold">v{pendingUpdate.version}</strong> (เวอร์ชันปัจจุบัน v{pendingUpdate.currentVersion})
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  className="h-6 px-2.5 text-xs font-semibold"
+                  disabled={isUpdating}
+                  onClick={handleApplyUpdate}
+                >
+                  {isUpdating ? "กำลังดาวน์โหลด..." : "อัปเดตและรีสตาร์ท"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
+                  disabled={isUpdating}
+                  onClick={() => setPendingUpdate(null)}
+                >
+                  ไว้คราวหลัง
+                </Button>
+              </div>
+            </div>
+          )}
 
           <div className="flex flex-1 flex-col overflow-hidden">
             {renderView()}

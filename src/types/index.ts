@@ -201,11 +201,9 @@ export const DRYER_PROGRAMS: Record<
   number,
   { label: string; time: string; minutes: number; price: number }
 > = {
-  1: { label: "Air Dry",   time: "20m", minutes: 20, price: 20 },
-  2: { label: "Low Heat",  time: "35m", minutes: 35, price: 30 },
-  3: { label: "Normal",    time: "45m", minutes: 45, price: 40 },
-  4: { label: "High Heat", time: "60m", minutes: 60, price: 50 },
-  5: { label: "ExtraDry",  time: "75m", minutes: 75, price: 60 },
+  1: { label: "Low Temp (50°C)",   time: "30m", minutes: 30, price: 30 },
+  2: { label: "Medium Temp (65°C)", time: "40m", minutes: 40, price: 40 },
+  3: { label: "High Temp (75°C)",  time: "50m", minutes: 50, price: 50 },
 }
 
 export const STATE_PROGRESS: Record<MachineState, number> = {

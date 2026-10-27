@@ -4,9 +4,10 @@ import {
   BarChart3, X, Play, Square, SkipForward,
   AlertTriangle, Lock, Unlock, DoorOpen, DoorClosed,
   Waves, Wind, Droplets, RotateCw, Flame, CheckCircle2,
-  Pause, CircleMinus,
+  Pause, CircleMinus, Check, Trash2,
 } from "lucide-react"
 import { trackedInvoke } from "@/lib/tauri"
+import { removeMachine } from "@/lib/commands"
 import type { Machine, SimulatorConfig, Toast, MachineState } from "@/types"
 import { STATE_PROGRESS } from "@/types"
 import { formatTime, stateClass, stateToCode } from "@/utils/format"
@@ -169,6 +170,13 @@ export function MachineCard({ machine, onRefresh, onToast, config }: MachineCard
   const [waterHistory, setWaterHistory] = useState<number[]>([])
   const [showRegs, setShowRegs]         = useState(false)
   const [showErrorInject, setShowErrorInject] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(false)
+
+  useEffect(() => {
+    if (!confirmDelete) return
+    const timer = setTimeout(() => setConfirmDelete(false), 4000)
+    return () => clearTimeout(timer)
+  }, [confirmDelete])
 
   useEffect(() => {
     setTempHistory(prev  => [...prev.slice(-29),  machine.temperature])
@@ -203,6 +211,18 @@ export function MachineCard({ machine, onRefresh, onToast, config }: MachineCard
       onToast("success", `Started: ${machine.machine_type} #${machine.id}`)
       onRefresh()
     } catch (err) { onToast("error", String(err)) }
+  }
+
+  const handleDelete = async () => {
+    try {
+      await removeMachine(machine.id)
+      onToast("info", `Removed ${machine.machine_type} #${machine.unit_id}`)
+      onRefresh()
+    } catch (err) {
+      onToast("error", String(err))
+    } finally {
+      setConfirmDelete(false)
+    }
   }
 
   const isWasher   = machine.machine_type === "Washer"
@@ -248,37 +268,59 @@ export function MachineCard({ machine, onRefresh, onToast, config }: MachineCard
           </div>
         </div>
         <div className="flex items-center gap-1">
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-6 w-6 text-yellow-500 hover:bg-yellow-500/10"
-            onClick={() => setShowErrorInject(!showErrorInject)}
-            title="Inject Error"
-          >
-            <AlertTriangle size={13} />
-          </Button>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-6 w-6"
-            onClick={() => setShowRegs(!showRegs)}
-            title="Toggle Registers"
-          >
-            <BarChart3 size={13} />
-          </Button>
-          <Button
-            size="icon"
-            variant="ghost"
-            className="h-6 w-6 text-destructive hover:bg-destructive/10"
-            onClick={() => {
-              const portText = machine.port ? ` on ${machine.port.split("/").pop()}` : ""
-              if (window.confirm(`Remove ${machine.machine_type} #${machine.unit_id}${portText}?`))
-                cmd("remove_machine", { machineId: machine.id, unitId: machine.id })
-            }}
-            title="Remove Machine"
-          >
-            <X size={13} />
-          </Button>
+          {confirmDelete ? (
+            <div className="flex items-center gap-1 bg-destructive/15 border border-destructive/30 rounded-md px-1.5 py-0.5 animate-in fade-in zoom-in-95 duration-150">
+              <span className="text-[10px] font-semibold text-destructive">Delete?</span>
+              <Button
+                size="icon"
+                variant="destructive"
+                className="h-5 w-5 p-0"
+                onClick={handleDelete}
+                title="Confirm Remove"
+              >
+                <Check size={12} />
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-5 w-5 p-0 text-muted-foreground hover:text-foreground"
+                onClick={() => setConfirmDelete(false)}
+                title="Cancel"
+              >
+                <X size={12} />
+              </Button>
+            </div>
+          ) : (
+            <>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-6 w-6 text-yellow-500 hover:bg-yellow-500/10"
+                onClick={() => setShowErrorInject(!showErrorInject)}
+                title="Inject Error"
+              >
+                <AlertTriangle size={13} />
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-6 w-6"
+                onClick={() => setShowRegs(!showRegs)}
+                title="Toggle Registers"
+              >
+                <BarChart3 size={13} />
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="h-6 w-6 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
+                onClick={() => setConfirmDelete(true)}
+                title="Remove Machine"
+              >
+                <Trash2 size={13} />
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -477,7 +519,7 @@ export function MachineCard({ machine, onRefresh, onToast, config }: MachineCard
                 [`${40000 + map.time_min} T-MIN`, Math.floor(machine.time_remaining / 60)],
                 [`${40000 + map.time_sec} T-SEC`, machine.time_remaining % 60],
                 [`${40000 + map.water_level} WATER`, machine.water_level],
-                [`${40000 + map.temperature} TEMP`,  Math.round(machine.temperature * 10)],
+                [`${40000 + map.temperature} TEMP`,  Math.round(machine.temperature)],
                 [`${40000 + map.rpm} RPM`,   machine.rpm],
                 [`${40000 + map.program} PROG`,  machine.program],
                 [`${40000 + map.coins} COINS`, machine.coins],
