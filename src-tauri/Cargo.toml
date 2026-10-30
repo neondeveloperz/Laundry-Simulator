@@ -1,6 +1,6 @@
 [package]
 name = "laundry-simulator"
-version = "2.2.0"
+version = "2.2.1"
 description = "Laundry Simulator — Modbus RTU machine simulator"
 authors = ["armzi"]
 edition = "2021"

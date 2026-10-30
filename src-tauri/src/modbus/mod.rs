@@ -292,10 +292,28 @@ fn apply_write_to_machine(
     } else if is_start {
         if value == 1 && (m.state == MachineState::Idle || m.state == MachineState::Completed) {
             let price = get_program_price(m.machine_type, m.program, cfg);
-            if m.coins >= price && m.door_status != 1 {
-                m.coins -= price;
+            // Support both direct Baht and 10-Baht pulse count (e.g. 5 or 7 pulses for 50 or 70 THB)
+            let effective_coins = if m.coins < price && m.coins * 10 >= price {
+                m.coins * 10
+            } else {
+                m.coins
+            };
+
+            if effective_coins >= price && m.door_status != 1 {
+                let mut duration = get_program_duration(m.machine_type, m.program, cfg);
+                let extra_coins = effective_coins - price;
+                if m.machine_type == MachineType::Dryer && extra_coins > 0 {
+                    // Dryer top-up: 10 THB = +5 minutes (300 seconds)
+                    let extra_seconds = (extra_coins / 10) * 300;
+                    duration += extra_seconds;
+                    m.total_coins += extra_coins;
+                    m.coins = 0;
+                } else {
+                    m.coins = effective_coins - price;
+                }
+
                 m.total_coins += price;
-                m.time_remaining = get_program_duration(m.machine_type, m.program, cfg);
+                m.time_remaining = duration;
                 m.door_status = 3;
                 if m.machine_type == MachineType::Washer {
                     m.state = MachineState::Filling;
@@ -305,13 +323,13 @@ fn apply_write_to_machine(
                     m.temperature = 45.0;
                 }
                 emit_modbus_log(handle, format!(
-                    "Modbus: Machine #{} STARTED (prog={}, price={}, remaining_coins={})",
-                    m.id, m.program, price, m.coins
+                    "Modbus: Machine #{} STARTED (prog={}, price={}, extra_time={}s, total_time={}s)",
+                    m.id, m.program, price, if m.machine_type == MachineType::Dryer { (extra_coins / 10) * 300 } else { 0 }, duration
                 ));
             } else {
                 // Log the reason for failure
-                let reason = if m.coins < price {
-                    format!("insufficient coins ({} < {} required)", m.coins, price)
+                let reason = if effective_coins < price {
+                    format!("insufficient coins ({} < {} required)", effective_coins, price)
                 } else {
                     "door is open".to_string()
                 };
@@ -346,8 +364,17 @@ fn apply_write_to_machine(
             emit_modbus_log(handle, format!("Modbus: Machine #{} STOPPED via write command", m.id));
         }
     } else if is_coins {
-        m.coins = m.coins.saturating_add(value as u32);
-        emit_modbus_log(handle, format!("Modbus: Machine #{} coins +{} (total={})", m.id, value, m.coins));
+        let added_val = if value < 10 { (value as u32) * 10 } else { value as u32 };
+        if m.machine_type == MachineType::Dryer && m.state == MachineState::Drying {
+            // Mid-cycle top-up while running: 10 THB = +5 minutes (300 seconds)
+            let extra_seconds = (added_val / 10) * 300;
+            m.time_remaining = m.time_remaining.saturating_add(extra_seconds);
+            m.total_coins = m.total_coins.saturating_add(added_val);
+            emit_modbus_log(handle, format!("Modbus: Dryer #{} top-up +{}฿ (+{}s, remain={}s)", m.id, added_val, extra_seconds, m.time_remaining));
+        } else {
+            m.coins = m.coins.saturating_add(added_val);
+            emit_modbus_log(handle, format!("Modbus: Machine #{} coins +{} (total={})", m.id, added_val, m.coins));
+        }
     } else if is_prog && (1..=30).contains(&value) {
         m.program = value as u8;
         emit_modbus_log(handle, format!("Modbus: Machine #{} program set to {}", m.id, value));

@@ -92,8 +92,16 @@ pub fn remove_machine(
 pub fn insert_coin(machine_id: u32, amount: u32, state: State<AppState>) -> Result<Machine, String> {
     let mut m = safe_lock(&state.machines);
     let machine = m.iter_mut().find(|m| m.id == machine_id).ok_or("Machine not found")?;
-    machine.coins = machine.coins.saturating_add(amount);
-    state.emit_log("INFO", &format!("User: Inserted {}฿ into machine #{}", amount, machine_id));
+    if machine.machine_type == MachineType::Dryer && machine.state == MachineState::Drying {
+        // Mid-cycle top-up: 10 THB = +5 minutes (300 seconds)
+        let extra_seconds = (amount / 10) * 300;
+        machine.time_remaining = machine.time_remaining.saturating_add(extra_seconds);
+        machine.total_coins = machine.total_coins.saturating_add(amount);
+        state.emit_log("INFO", &format!("User: Mid-cycle top-up {}฿ (+{}s, remain={}s) on dryer #{}", amount, extra_seconds, machine.time_remaining, machine_id));
+    } else {
+        machine.coins = machine.coins.saturating_add(amount);
+        state.emit_log("INFO", &format!("User: Inserted {}฿ into machine #{}", amount, machine_id));
+    }
     Ok(machine.clone())
 }
 
@@ -125,9 +133,20 @@ pub fn start_machine(machine_id: u32, state: State<AppState>) -> Result<Machine,
         return Err(format!("Insufficient coins (need ≥ {}฿, have {}฿)", price, machine.coins));
     }
 
-    machine.coins         -= price;
+    let extra_coins = machine.coins - price;
+    let mut duration = get_program_duration(machine.machine_type, machine.program, &cfg);
+    if machine.machine_type == MachineType::Dryer && extra_coins > 0 {
+        // Dryer top-up: 10 THB = +5 minutes (300 seconds)
+        let extra_seconds = (extra_coins / 10) * 300;
+        duration += extra_seconds;
+        machine.total_coins += extra_coins;
+        machine.coins = 0;
+    } else {
+        machine.coins -= price;
+    }
+
     machine.total_coins   += price;
-    machine.time_remaining = get_program_duration(machine.machine_type, machine.program, &cfg);
+    machine.time_remaining = duration;
     machine.door_status    = 5; // Locking
     machine.door_timer     = 2.0;
 
